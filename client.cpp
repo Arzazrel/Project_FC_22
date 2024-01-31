@@ -17,6 +17,7 @@
 #include <openssl/x509_vfy.h>
 #include <openssl/err.h>
 #include "common.h"
+#include <arpa/inet.h>
 
 // ------------------------------- start: struct and global variables -------------------------------
 int socket_server, fdmax, stato;	//variabili per contenere una il fd del socket del server e l'altra per contenere l'fd maggiore nella lista della select,
@@ -27,7 +28,7 @@ string mex_after_server_conn = "Server authentication in progress...\n";
 // ------------------------------- end: struct and global variables -------------------------------
 
 // ------------------------------- start: path -------------------------------
-string keys_path = "ClientFiles/keys/";                     // path to users keys folder
+string keys_path = "ClientFiles/Keys/";                     // path to users keys folder
 string cert_path = "ClientFiles/Certificates/";             // path to certificates folder
 string CA_cert_path = "ClientFiles/Certificates/FoC_Proj_CA_cert.pem";      // path to CA certificate
 string CA_CRL_path = "ClientFiles/Certificates/FoC_Proj_CA_CRL.pem";        // path to CRL
@@ -42,10 +43,8 @@ string err_open_file = "Error: cannot open file";       // error that occurs whe
 // ------------------------------- start: general function -------------------------------
 
 /*
-    Description: 
-        
-    Parameters:
-        - 
+    Description:    function to show the error message and terminate the programme
+    Parameters:     error message
 */
 void error(const char *msg)
 {
@@ -53,9 +52,8 @@ void error(const char *msg)
     exit(1);
 }
 
-/*
-    Description: function to print the legend of the command for the user
-*/
+
+//   Description: function to print the legend of the command for the user
 void print_command_legend()
 {
 	cout<<"-----------------------------------------------------------\n";
@@ -88,7 +86,6 @@ void  print_files_list(unsigned char* buffer, unsigned int buffer_size)
 	printf("%s \n",nickname);
 	read++;
 	*/
-	}
 }
 
 // ------------------------------- end: general function -------------------------------
@@ -228,36 +225,25 @@ void open_server_connection(char* ip_server, int server_port)
      
      // check that the port value passed as a parameter is valid
      if ((server_port < 0) || (server_port > 65535))					
-     {
-        cerr << "Invalid port number: " << server_port <<".\n";
-        exit(1);
-     }
+        error("Invalid port number: " + server_port + ".\n");
+        
      p = server_port;                       // the port is correct
      
      // create socket 
      if ((socket_server = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-     {
-        perror("Error in the \"socket()\": ");					
-        exit(1);
-     }
+        error("Error in the \"socket()\": ");					
      
      memset((char*)&addr_server, 0, sizeof(addr_server));		//cleans, sets the memory zone to 0
      addr_server.sin_family = AF_INET;
      addr_server.sin_port = htons(p);
      //server address conversion from numeric address to Byte
      if (!inet_pton(AF_INET, ip_server , &addr_server.sin_addr.s_addr))		
-     {
-        cerr << "Invalid server address.\n";					//segnalazione errore indirizzo server non valido
-        exit(1);
-     }
+        error("Invalid server address.\n");                     //segnalazione errore indirizzo server non valido
      
      // connection to the server indicated in the parameters
      ret = connect(socket_server, ( struct sockaddr *) &addr_server, sizeof(addr_server));
      if (ret<0)			
-     {
-        perror("Errore nella \"connect()\":");                  // connection error
-        exit(1);
-     }
+        error("Errore nella \"connect()\":");                  // connection error
 }
 
 /*
@@ -270,33 +256,30 @@ void open_server_connection(char* ip_server, int server_port)
     Return:
         - the private key of the user
 */
-EVP_PKEY* check_username(char* username, char* username_buffer, buffer_len)
+EVP_PKEY* check_username(char* username, char* username_buffer , int buffer_len)
 {
     // check the the length of the username
     if(strlen(username) >= buffer_len)
-    {
-        cerr<<"Username is too long (can be maximum 19 characters).\n";
-        exit(1);
-    }
+        error("Username is too long (can be maximum 19 characters).\n");
     
     // check if the username is valid. SEE NOTE 0 at the bottom of the file.
-    sprintf(username_buffer,"%.buffer_lens",username);
-	string filename = "ClientFiles/Keys/"+string(username_buffer)+"_privk.pem";    // path to retrieve the privk of the user
+    
+	string filename = keys_path + string(username)+"_privk.pem";    // path to retrieve the privk of the user
 	
 	EVP_PKEY* user_key;
 	FILE* file = fopen(filename.c_str(), "r");                 // open the file containing the privk   
 	if(!file)                                              
-	{
-    	cerr<<"User does not have a key file. The user is not signed or the username isn't correct.\n";
-    	exit(1);
-    }   
+	    error("User does not have a key file. The user is not signed or the username isn't correct.\n");
+
 	user_key= PEM_read_PrivateKey(file, NULL, NULL, NULL);     // read the privk
 	if(!user_key) 
-	{
-    	cerr<<"user_key Error\n";
-    	exit(1);
-    }
+    	error("user_key Error\n");
 	fclose(file);                                              // close the file containing the privk
+	
+	// user is valid, save the username in array
+	int cx = snprintf(username_buffer,buffer_len ,"%s",username);
+	if (cx < 0)
+    	error("Error in username copy.\n");
 	
 	return user_key;                                   // username is correct, return privk of the user
 }
@@ -316,8 +299,8 @@ int main(int argc, char *argv[])
     }
     
     user_key = check_username(argv[3],username,USERNAME_SIZE);  // control for the username 
-    
-    open_server_connection(argv[1], atoi(argv[2]));		        // connection to the server
+       
+    open_server_connection(argv[1], atoi(argv[2]));		  // connection to the server
 	
 	//visualizza messaggio di connessione al server
     printf("Successful server connection, ip %s and port %s\n",argv[1],argv[2]);		
