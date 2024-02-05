@@ -54,6 +54,18 @@ void error(const char *msg)
     perror(msg);
     exit(1);
 }
+
+/*
+    Description:    function that increments the counter passed as parameter by 1 (module maximum value for unsigned int)
+    Parameters:     counter nonce to be updated
+*/
+void inc_counter_nonce(unsigned int &counter)
+{
+	if(counter == UINT_MAX)    // check if the maximum value is reached
+		counter=0;                // reset to 0
+	else
+		counter++;                // increment of 1
+}
 // ------------------------------- end: function to manage error message -------------------------------
 
 // ------------------------------- start: function to send and receive messages via sockets -------------------------------
