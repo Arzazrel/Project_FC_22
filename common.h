@@ -34,6 +34,17 @@ const EVP_MD* sign_alg = EVP_sha256();                  // indicates algorithm t
 
 // ------------------------------- end: parmaeter and utility variables for encrypt and digital sign -------------------------------
 
+// ------------------------------- start: function to manage error message -------------------------------
+/*
+    Description:    function to show the error message using ERR_print_errors(), which is a utility function that prints
+                    the error strings for all errors that OpenSSL has recorded in bp, thus emptying the error queue.
+*/
+void handleErrors(void)
+{
+	ERR_print_errors_fp(stderr);
+	abort();
+}
+
 /*
     Description:    function to show the error message and terminate the programme
     Parameters:     error message
@@ -43,9 +54,9 @@ void error(const char *msg)
     perror(msg);
     exit(1);
 }
+// ------------------------------- end: function to manage error message -------------------------------
 
 // ------------------------------- start: function to send and receive messages via sockets -------------------------------
-
 /*
     Description: 
         function to send a message via a specified socket 
@@ -114,11 +125,9 @@ unsigned int receive_msg(int socket, unsigned char* message)
 	}
 	return 0;                  // return 0
 }
-
 // ------------------------------- end: function to send and receive messages via sockets -------------------------------
 
 // ------------------------------- start: function to sign and verify sign -------------------------------
-
 /*
     Description: 
         function to sign using a private key passed as parameter   
@@ -126,9 +135,9 @@ unsigned int receive_msg(int socket, unsigned char* message)
         - priv_k: the private key to sign
         - clear_buf: buffer that contain the clear message (to be encrypted)
         - clear_size: size of the clear message
-        - output_buffer: buffer that contain the encrypted message
+        - output_buffer: buffer that contain the signed message -> format -> ( sign_size | sign(clear_text) | clear_text )
     Return:
-        - size of the encrypted message
+        - size of the encrypted message. 
 */
 unsigned int digsign_sign(EVP_PKEY* priv_k, unsigned char* clear_buf, unsigned int clear_size, unsigned char* output_buffer)
 {
@@ -152,7 +161,7 @@ unsigned int digsign_sign(EVP_PKEY* priv_k, unsigned char* clear_buf, unsigned i
     	error("Error in digsign_sign: EVP_SignUpdate returned 0.\n");
 	
 	unsigned int sign_size;                    // size of the sign received from final
-	unsigned char* signature_buffer=(unsigned char*)malloc(EVP_PKEY_size(prvkey)); //buffer to contain priv_key
+	unsigned char* signature_buffer = (unsigned char*)malloc(EVP_PKEY_size(prvkey)); //buffer to contain priv_key
 	if(!signature_buffer)
     	error("Error in malloc signature buffer in digsign_sign.\n");
 	
@@ -167,7 +176,7 @@ unsigned int digsign_sign(EVP_PKEY* priv_k, unsigned char* clear_buf, unsigned i
 	written += sgnt_size;                      // update size of the written message
 	memcpy(output_buffer + written, clear_buf, clear_size);            // write the clear message
 	written += clear_size;                     // update size of the written message
-	EVP_MD_CTX_free(sign_ctx);                   // free the context
+	EVP_MD_CTX_free(sign_ctx);                 // free the context
 	
 	return written;            // return the size of the written message 
 }
@@ -176,7 +185,7 @@ unsigned int digsign_sign(EVP_PKEY* priv_k, unsigned char* clear_buf, unsigned i
     Description: 
         function to verify the sign using a pub_key passed as parameter     
     Parameters:     
-        - pub_k:
+        - pub_k: the public key for decrypt and verify the signature
         - input_buffer: buffer containing the sign to verify ( sign_size | sign | clear_text )
         - input_size: size of the input_buffer
         - output_buffer: buffer to the clear text
@@ -235,7 +244,79 @@ int digsign_verify(EVP_PKEY* pub_k, unsigned char* input_buffer, unsigned int in
 
 	return input_size - read;          // return dimension of clear text, all is correct then is greater then 0
 }
-
 // ------------------------------- end: initial parameter control functions -------------------------------
 
+// ------------------------------- start: functions for using the ECDH protocol for creating a shared secret key -------------------------------
+/*
+    Description:    function to create a Diffie-Hellman key pair  
+    Return:         DH private key
+*/
+EVP_PKEY* dh_gen_key()
+{
+	EVP_PKEY *params = NULL;       // use default Diffie-Hellmann parameters
+
+	EVP_PKEY_CTX* PDH_ctx;          // Create context for the key generation
+	
+	if(NULL == (PDH_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL))) // allocate context to ECDH
+    	handleErrors();
+	if(1 != (EVP_PKEY_paramgen_init(PDHctx)))                      // generate key parameters, return 1 for success, 0 or <0 for failure
+    	handleErrors();
+    //  sets the EC curve for EC parameter generation to nid. For EC parameter generation this macro must be called or an error occurs because there is no default curve. 
+	if(1!=(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(PDHctx, NID_X9_62_prime256v1))) 
+    	handleErrors();
+	if(!EVP_PKEY_paramgen(PDHctx, &params)) 
+    	handleErrors();
+	EVP_PKEY_CTX_free(PDHctx);     // delete context
+	
+    // generate a new key
+	EVP_PKEY_CTX* DH_ctx;          // create context for key generation
+	if(NULL == (DH_ctx = EVP_PKEY_CTX_new(params, NULL))) 
+    	handleErrors();
+	EVP_PKEY* DH_key = NULL;       // create DH private key
+	if(1 != EVP_PKEY_keygen_init(DHctx)) 
+    	handleErrors();
+	if(1 != EVP_PKEY_keygen(DHctx, &my_dhkey)) 
+    	handleErrors();
+	EVP_PKEY_CTX_free(DHctx);      // delete context
+	
+	EVP_PKEY_free(params);
+	
+	return my_dhkey;               // return DH key
+} 
+
+/*
+    Description: 
+        function to create the session key from the shared secret obtained via ECDH   
+    Parameters:     
+        - shared_secret: ECDH shared secret
+        - shared_secret_len: size of the ECDH shared secret
+        - sessionkey: output buffer to the session key
+    Return:
+        - unsigned int that rapresent the size of session key
+*/
+unsigned int dh_generate_session_key(unsigned char* shared_secret, unsigned int shared_secret_len, unsigned char* session_key)
+{
+	unsigned int session_key_len;      // contain the len of the key
+	int ret;
+	
+	EVP_MD_CTX* hash_ctx;              // create context for hash
+	hash_ctx = EVP_MD_CTX_new();       // context allocation
+	if(!hash_ctx) 
+    	error("Error in dh_generate_session_key: EVP_MD_CTX_new Error.\n");
+	// Hashing (initialization + single update + finalization
+	ret = EVP_DigestInit(hash_ctx, sign_alg);      // sign init
+	if(ret != 1)
+    	error("Error in dh_generate_session_key: EVP_DigestInit error.\n");
+	ret = EVP_DigestUpdate(hash_ctx, shared_secret, shared_secret_len);     // sign update
+	if(ret != 1)
+    	error("Error in dh_generate_session_key: EVP_DigestUpdate Error.\n");
+	ret = EVP_DigestFinal(hash_ctx, session_key, &session_key_len);          // sign final
+	if(ret != 1)
+    	error("Error in dh_generate_session_key: EVP_DigestFinal Error.\n");
+	EVP_MD_CTX_free(hash_ctx);         // free context
+	
+	return sessionkey_len;             // return the len of the session key
+}
+
+// ------------------------------- end: functions for using the ECDH protocol for creating a shared secret key -------------------------------
 
