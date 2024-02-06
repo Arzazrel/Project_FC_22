@@ -16,11 +16,15 @@
 #include <string.h> 
 
 // ------------------------------- start: constant -------------------------------
-#define USERNAME_SIZE 20        // maximum length for users' usernames
-#define MAX_CLIENTS 20          // maximum number of clients connected to the server at the same time
-#define MAX_SIZE 15000
+#define USERNAME_SIZE 20            // maximum length for users' usernames
+#define MAX_CLIENTS 20              // maximum number of clients connected to the server at the same time
+#define MAX_FILE_SIZE 4294967296    // maximum size of files that can be saved and received by the cloud server 4Gbi = 2^32 Bytes
+// -- define for messages format -- GCM mex format is -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
+// Messages exchanged normally do not contain large files but keys, certificates, signatures or text (they do not need large buffers to be handled)
+#define MAX_SIZE 102400             // the maximum length for normal message (100 KBi)
 #define MSG_MAX 10000
-#define NONCE_SIZE 4            // size of the nonce
+#define NONCE_SIZE 4                // size of the nonce
+#define MSG_NONCE_OFFSET 34         // offset of the nonce in the message format (nonce is after cmd_code,tag,IV,nonce_len)
 // ------------------------------- end: constant -------------------------------
 
 using namespace std;
@@ -29,7 +33,7 @@ using namespace std;
 const EVP_CIPHER* AE_cipher = EVP_aes_128_gcm();        // for ecnryption using AES with 128 bit 
 int AE_iv_len =  EVP_CIPHER_iv_length(AE_cipher);       // size of the IV for encryption and decryption
 int AE_block_size = EVP_CIPHER_block_size(AE_cipher);   // size of the block for encryption and decryption
-const int AE_tag_len = 16;                              // size of the TAG
+const int AE_tag_len = 16;                              // size (in Bytes) of the TAG in GCM with AES-128
 const EVP_MD* sign_alg = EVP_sha256();                  // indicates algorithm to sign (hash), in this case SHA 256
 
 // ------------------------------- end: parmaeter and utility variables for encrypt and digital sign -------------------------------
@@ -332,3 +336,248 @@ unsigned int dh_generate_session_key(unsigned char* shared_secret, unsigned int 
 
 // ------------------------------- end: functions for using the ECDH protocol for creating a shared secret key -------------------------------
 
+// ------------------------------- start: functions for encryption and decryption with GCM with AES_128  -------------------------------
+/*
+    Description: 
+        function for GCM encryption with AES_128
+    Parameters:     
+        - cmd_code: code to identify the operation between client and server  
+        - aad: the rest of aad (in addition to cmd_code, it is usually the nonce that is counter to ensure the freshness of the message)
+        - aad_len: the size of the aad
+        - input_buffer: buffer thath contain the clear text to be encrypted
+        - input_len: the size of the clear text in input
+        - shared_key: the shared key for symmetric encryption (derived from ECDH between client and server)
+        - output_buffer: buffer to contain the encrypted message in this format -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
+    Return:
+        - int that rapresent: the total length of the message (success) or '-1' if encryption has failed
+*/
+int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, unsigned char *output_buffer)
+{
+    int ret;
+    unsigned int cmd_code_size = sizeof(short);     // take size of cmd_code
+    // dimension check 1, checks if at least one of the two input buffers is larger than the maximum allowed size.
+    if (input_len > MAX_SIZE || aad_len > MAX_SIZE)
+    {
+        cerr << "Error in GCM (AES_128) encryptor function: AAD or plaintext too big.\n";
+        cerr << "AAD dimension is: " << aad_len << "B , plaintext dimension is: " << input_len << "B, max possible dimension is: " << MAX_SIZE << "B.\n";
+        return -1;                  // failed return value
+    }
+    // dimension check 2, checks if together the two input buffers are larger than the maximum space they can have available (maximum allowed size - the size of the other fields in the packet in the format of this application)
+    if(input_len + aad_len > MAX_SIZE - AE_block_size - sizeof(unsigned int) - AE_iv_len - AE_tag_len - cmd_code_size)
+    {
+        cerr << "Error in GCM (AES_128) encryptor function: AAD or plaintext too big.\n";
+        return -1;                  // failed return value
+    }
+    EVP_CIPHER_CTX* ctx;               // create context for Authenticated Encryption
+	int len = 0;
+	int ciphertext_len = 0;            // contain the size of the ciphertext
+	
+    // generate IV
+    unsigned char *iv = (unsigned char *)malloc(AE_iv_len);     // allocate buffer to IV
+    if(!iv) 
+        error("Error in GCM (AES_128) encryptor: IV malloc error.\n");
+    RAND_poll();                                                // seed random generator
+	ret = RAND_bytes((unsigned char*)&iv[0], AE_iv_len);        // create random bytes for nonce
+	
+	unsigned char* ciphertext = (unsigned char *)malloc(input_len + AE_block_size);    // buffer to contain the ciphertext, maximum size is plaintext_size + block_size
+	if(!ciphertext) 
+    	error("Error in GCM (AES_128) encryptor: ciphertext malloc error.\n");
+	
+	unsigned char* tag = (unsigned char *)malloc(AE_tag_len);      // buffer to contain the TAG
+	if(!tag) 
+    	error("Error in GCM (AES_128) encryptor: TAG malloc error.\n");
+	
+	unsigned char* complete_aad=(unsigned char*)malloc(sizeof(short) + cmd_code_size); // buffer to contain the complete AAD = ( cmd_code | nounce )
+	if(!complete_aad) 
+    	error("Error in GCM (AES_128) encryptor: AAD malloc error.\n");
+	memcpy(complete_aad, &cmd_code, cmd_code_size);            // copy in complete_aad the cmd_code
+	memcpy(complete_aad + cmd_code_size, aad, aad_len);    // copy in complete_aad the nonce
+	 
+    // Authenticated encryption
+    if(!(ctx = EVP_CIPHER_CTX_new()))       // context allocation
+        handleErrors();
+
+	if(1 != EVP_EncryptInit(ctx, AE_cipher, shared_key, iv))   // Initialise the encryption operation.
+    	handleErrors();
+	
+	// provide any AAD data. This can be called zero or more times as required
+	if(1 != EVP_EncryptUpdate(ctx, NULL, &len, complete_aad, aad_len + cmd_code_size))
+    	handleErrors();
+    // provide the message to be encrypted, and obtain the ciphertext output.
+	if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, input_buffer, input_len))
+    	handleErrors();
+	ciphertext_len = len;          // update ciphertext len
+	
+	
+	if(1 != EVP_EncryptFinal(ctx, ciphertext + ciphertext_len, &len))  // finalize Encryption
+    	handleErrors();
+	ciphertext_len += len;         // update ciphertext len
+	
+	// get the TAG and put it in tag buffer
+	if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, AE_tag_len, tag))
+    	handleErrors();
+	
+	unsigned int output_len = AE_tag_len + ciphertext_len + AE_iv_len + aad_len + sizeof(unsigned int) + cmd_code_size;   // len of the message
+	unsigned int written = 0;
+	
+	// copy in the output buffer, in the format -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
+	// -- write cmd_code in output buffer
+	memcpy(output_buffer, (unsigned char *)&cmd_code, cmd_code_size);      
+	written += cmd_code_size;    
+	// -- write the tag in output buffer
+	memcpy(output_buffer + written, tag, AE_tag_len);
+	written += AE_tag_len;                     // update written offset
+	// -- write the IV in output buffer
+	memcpy(output_buffer + written, iv, AE_iv_len);
+	written += AE_iv_len;                      // update written offset
+	// -- write the nonce_len in output buffer
+	memcpy(output_buffer + written, (unsigned char *)&aad_len, sizeof(unsigned int));
+	written += sizeof(unsigned int);           // update written offset
+	// -- write the nonce in output buffer
+	memcpy(output_buffer + written, aad, aad_len);
+	written += nonce_len;                      // update written offset
+	// -- write the ciphertext in output buffer
+	memcpy(output_buffer + written, ciphertext, ciphertext_len);
+	written += ciphertext_len;                 // update written offset
+	
+	// free all 
+	EVP_CIPHER_CTX_free(ctx);  // free context
+	free(tag);                 // free TAG buffer
+	free(iv);                  // free IV buffer
+	free(ciphertext);          // free ciphertext buffer
+	
+	return written;            // return the dimension of the encrypted message in the specified format
+}
+
+/*
+    Description: 
+        function for GCM decryption with AES_128
+    Parameters:     
+        - input_buffer: buffer thath contain the ciphertext to be decrypted, in this format -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
+        - input_len: the size of the clear text in input
+        - shared_key: the shared key for symmetric encryption (derived from ECDH between client and server)
+        - cmd_code: buffer in which to insert the received code (that identify the operation between client and server)  
+        - output_aad: buffer in which to insert the received aad (in addition to cmd_code, it is usually the nonce that is counter to ensure the freshness of the message)
+        - aad_len: the size of the output_aad
+        - output_buffer: buffer to contain the decrypted message
+    Return:
+        - int that rapresent: the length of the output_buffer containing the decrypted message or '-1' if decryption has failed
+*/
+int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, short &cmd_code, unsigned char* output_aad, unsigned int &aad_len, unsigned char* output_buffer)
+{
+    int ret;
+    unsigned int cmd_code_size = sizeof(short);     // take size of cmd_code
+    // dimension check 1, checks if input buffer is larger than the maximum allowed size.
+    if (input_len > MAX_SIZE)
+    {
+        cerr << "Error in GCM (AES_128) decryptor function: packet too big.\n";
+        cerr << "Packet dimension is: " << input_len << "B, max possible dimension is: " << MAX_SIZE << "B.\n";
+        return -1;                  // failed return value
+    }
+    // dimension check 2, checks if the message is smaller than the minimum size for a well formatted mex
+    if(input_len <= AE_iv_len + AE_tag_len + cmd_code_size)
+    {
+        cerr << "Error in GCM (AES_128) decryptor function: malformed or empty message.\n";
+        return -1;                  // failed return value
+    }
+    
+    EVP_CIPHER_CTX *ctx;        // create context for Authenticated Decryption
+	unsigned int read = 0;
+	unsigned int output_len = 0;
+	int len;
+	// generate IV
+    unsigned char *iv = (unsigned char *)malloc(AE_iv_len);     // allocate buffer to IV
+    if(!iv) 
+        error("Error in GCM (AES_128) decryptor: IV malloc error.\n");
+    unsigned char* tag = (unsigned char *)malloc(AE_tag_len);   // buffer to contain the TAG
+	if(!tag) 
+    	error("Error in GCM (AES_128) decryptor: TAG malloc error.\n");
+    // read the Packet, the format is -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
+    // -- read cmd_code received
+    cmd_code =*(short*)(input_buffer);
+	read += cmd_code_size;             // update read offset
+    // -- read tag received
+    memcpy(tag, input_buffer + read, AE_tag_len);
+	read += AE_tag_len;                // update read offset
+	// -- read IV received
+	memcpy(iv, input_buffer + read, AE_iv_len);
+	read += AE_iv_len;                 // update read offset
+	// -- read aad_len received
+	aad_len=*(unsigned int*)(input_buffer + read);
+	read += sizeof(unsigned int);      // update read offset
+	// dimension check 3
+	if(input_len < read + aad_len) 
+	{
+    	cerr << "Error in GCM (AES_128) decryptor function: invalid aad_len.\n";
+        return -1;                  // failed return value
+	}
+	// dimension check 4
+	if(aad_len > MSG_MAX)
+	{
+        cerr << "Error in GCM (AES_128) decryptor function: aad too big.\n";
+        return -1;                  // failed return value
+    }
+	// -- read aad received (usually the nonce)
+	memcpy(output_aad, input_buffer + read, aad_len);
+	read += aad_len;               // failed return value
+	// -- read complete aad
+	unsigned char* complete_aad=(unsigned char*)malloc(aad_len + cmd_code_size); // buffer to contain the complete AAD = ( cmd_code | nounce )
+	if(!complete_aad) 
+    	error("Error in GCM (AES_128) decryptor: AAD malloc error.\n");
+	memcpy(complete_aad, &cmd_code,opsize);                    // copy cmd_code
+	memcpy(complete_aad + cmd_code_size, output_aad, aad_len); // copy aad
+	// -- read ciphertext
+	unsigned int ciphertext_len = input_len - read;            // take ciphertext len
+	// dimension check 5
+	if(ciphertext_len > MSG_MAX) 
+	{
+    	cerr << "Error in GCM (AES_128) decryptor function: ciphertext too big.\n";
+        return -1; 
+	}
+	unsigned char* ciphertext = (unsigned char *)malloc(ciphertext_len);   // allocate buffer to ciphertext
+	if(!ciphertext)
+    	error("Error in GCM (AES_128) decryptor: ciphertext Malloc Error.\n");
+	memcpy(ciphertext, input_buffer + read, ciphertext_len);
+	
+	// Authenticated decryption
+    if(!(ctx = EVP_CIPHER_CTX_new()))       // context allocation
+        handleErrors();
+
+	if(1 != EVP_DecryptInit(ctx, AE_cipher, shared_key, iv))   // Initialise the encryption operation.
+    	handleErrors();
+	
+	//Provide any AAD data.
+	if(1 != EVP_DecryptUpdate(ctx, NULL, &len, complete_aad, aad_len + cmd_code_size))
+    	handleErrors();
+    // provide the message to be decrypted, and obtain the plaintext output.
+	if(1 != EVP_DecryptUpdate(ctx, output_buffer, &len, ciphertext, ciphertext_len))
+    	handleErrors();
+	output_len = len;              // update output_len len
+	
+	// Set expected tag value. Works in OpenSSL 1.0.1d and later
+	if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, AE_tag_len, tag))
+    	handleErrors();
+	
+	// Finalise the decryption. A positive return value indicates success, anything else is a failure - the plaintext is not trustworthy.
+	ret = EVP_DecryptFinal(ctx, output_buffer + output_len, &len))
+    	handleErrors();
+	
+	// free all 
+	EVP_CIPHER_CTX_free(ctx);  // free context
+	free(tag);                 // free TAG buffer
+	free(iv);                  // free IV buffer
+	free(ciphertext);          // free ciphertext buffer
+	
+	// check if decryption was succesfull or not
+	if(ret > 0)        // success
+	{
+    	output_len += len;         // update output_len len
+    	return output_len;         // return output_len
+	} 
+	else               // verify failed
+	{
+    	cerr<<"Error in GCM (AES_128) decryptor: Verification failed!\n";
+    	return -1;
+	}
+}
+// ------------------------------- end: functions for encryption and decryption with GCM with AES_128  -------------------------------
