@@ -35,23 +35,14 @@ string CA_CRL_path = "ClientFiles/Certificates/FoC_Proj_CA_CRL.pem";        // p
 
 // ------------------------------- end: path -------------------------------
 
-// ------------------------------- start: error messages -------------------------------
-string err_open_file = "Error: cannot open file";       // error that occurs when a file cannot be opened
+// ------------------------------- start: messages -------------------------------
+string aut_encr_conn_succ = "Authenticated and encrypted connection with the server successfully established.\n";   // message that is displayed once the authenticated and encrypted connection with the server is successfully established
+// -- errors
+string err_open_file = "Error: cannot open file.\n";       // error that occurs when a file cannot be opened
 
-// ------------------------------- end: error messages -------------------------------
+// ------------------------------- end: messages -------------------------------
 
 // ------------------------------- start: general function -------------------------------
-
-/*
-    Description:    function to show the error message and terminate the programme
-    Parameters:     error message
-*/
-void error(const char *msg)
-{
-    perror(msg);
-    exit(1);
-}
-
 
 //   Description: function to print the legend of the command for the user
 void print_command_legend()
@@ -76,8 +67,8 @@ void print_command_legend()
 */
 void  print_files_list(unsigned char* buffer, unsigned int buffer_size)
 {
-	cout<<"--------------------------------------------------"<<"\n";
-	cout<<"Files stored on the server: "<<"\n";
+	cout<<"--------------------------------------------------\n";
+	cout<<"Files stored on the server: \n";
 	unsigned int read=0;
 	/*
 	char nickname[USERNAME_SIZE];
@@ -94,7 +85,7 @@ void  print_files_list(unsigned char* buffer, unsigned int buffer_size)
 
 /*
     Description:  
-        function to authenticate the server and to do login
+        function to authenticate the server (through the control of its certifier and the authentication of its public key)
     Parameters:
         - buffer: buffer conatining 
         - buffer_size: the size of the buffer 
@@ -161,19 +152,25 @@ EVP_PKEY* verify_server_cert( unsigned char* buffer, long buffer_size )
         exit(1); 
     }
     
-    // load the server's certificate: deserialize it from buffer
-    BIO* bio = BIO_new(BIO_s_mem());
-	if(!bio) { cerr<<"verify_server_certificate: Failed to allocate BIO_s_mem";exit(1); }
-	if(!BIO_write(bio, buffer, buffer_size )) { cerr<<"verify_server_certificate: BIO_write  error";exit(1); }
-	X509* cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
-    if(!cert){ cerr << "Error: PEM_read_bio_X509 returned NULL\n"; exit(1); }
-	BIO_free(bio);
+    // load the server's certificate: deserialize it from buffer (from BIO struct)
+    BIO* bio = BIO_new(BIO_s_mem());                // create new BIO
+	if(!bio) 
+    	error("Error in verify_server_certificate: failed to allocate BIO_s_mem.\n");
+	
+	if(!BIO_write(bio, buffer, buffer_size ))              // write in BIO the server certificate contained in buffer
+    	error("Error in verify_server_certificate: BIO_write failure.\n");
+	
+	X509* cert = PEM_read_bio_X509(bio, NULL, NULL, NULL); //read a certificate in PEM format from the BIO.
+    if(!cert)
+        error("Error in verify_server_certificate: PEM_read_bio_X509 returned NULL.\n");
+	BIO_free(bio);                                 // deallocate BIO
 
     // verify the certificate:
     X509_STORE_CTX* certvfy_ctx = X509_STORE_CTX_new();             // create new context to verify the certificate
     if(!certvfy_ctx) 
     { 
-        cerr << "Error: X509_STORE_CTX_new returned NULL\n" << ERR_error_string(ERR_get_error(), NULL) << "\n"; exit(1); 
+        cerr << "Error: X509_STORE_CTX_new returned NULL\n" << ERR_error_string(ERR_get_error(), NULL) << "\n"; 
+        exit(1); 
     }
     ret = X509_STORE_CTX_init(certvfy_ctx, store, cert, NULL);      // initialise the verification context
     if(ret != 1) 
@@ -207,6 +204,188 @@ EVP_PKEY* verify_server_cert( unsigned char* buffer, long buffer_size )
     return  server_pubkey; 
 }
 
+/*
+    Description:  
+        function to authenticate the client and server to establish a secure, authenticated connection 
+        between client and server. (First communication after connecting the sockets)
+    Parameters:
+        - socket_conn: fd of the socket connected to the server
+        - buffer: utility buffer to contain the message
+        - mex_buffer: buffer to contain the message to send
+        - username: username of the user that uses the client
+        - user_key: the private key of the user
+        - aad: buffer to allocate aad
+*/
+void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned char* mex_buffer, char* username, EVP_PKEY* user_key, unsigned char* aad)
+{
+    int message_size;               // size of the message to send  
+    
+    // create client nonce (CN)
+    unsigned char* mynonce=(unsigned char*)malloc(NONCE_SIZE);  // nonce created by client
+	if(!mynonce) 
+    	error("Error in mynonce Malloc.\n");
+	RAND_poll();                                               // seed random generator
+	ret = RAND_bytes((unsigned char*)&mynonce[0],NONCE_SIZE);  // create random bytes for nonce
+	if(ret!=1)
+    	error("Error in RAND_bytes.\n");
+    
+    cout << "Username in started connection: " << username << " di dimensione: " << strlen(username) <<"\n";    //++++++++++++++++
+    cout << "Nonce in started connection: " << mynonce << "\n";    //++++++++++++++++
+    
+    // Add nonce and username to buffer
+    memcpy(buffer,mynonce,NONCE_SIZE);
+	memcpy(buffer+NONCE_SIZE,username,strlen(username));
+
+    // 1) Send nonce and username -> messages format is -> ( size_sign | sign | nonce | username )
+    unsigned int signed_siz = digsign_sign(user_key, buffer, NONCE_SIZE+strlen(username),mex_buffer);
+	send_msg(socket_conn, signed_size, mex_buffer);        // send the messages
+    
+    // 2.0) Receive server certificate	(sended by the server)	
+    ret = recv(sockfd, &networknumber, sizeof(uint32_t), 0);    // receive size of message
+	if(ret <= 0)
+    	error("Error in socket receive.\n");
+	
+	long certsize = ntohl(networknumber);                  // take size of the server certificate
+	cout<<"Server certificate Size: "<< certsize <<"\n";   // show dimension of certificate
+	
+	unsigned char* certbuffer = (unsigned char*) malloc(certsize); // allocate the buffer to receive the server certificate
+	if(!certbuffer)
+    	error("Error in Malloc for the buffer for server certificate.\n");
+	
+	unsigned int received = 0;             // set the quantity received to 0
+	while(received < certsize)             // while to read the whole server certificate
+	{
+		ret = recv(socket_conn, certbuffer+received, certsize-received, 0);	// receive server certificate
+		if(ret < 0)
+    		error("Error in server certificate receive.\n");
+		received += ret;                  // update received
+	}
+	
+	// -- Verify server certificate and retrieve the server public key
+	EVP_PKEY* server_pub_k = verify_server_certificate( certbuffer, certsize );
+    
+    // 2.1) Receive signed message from server, format -> ( sign_size | sign(client nonce | server nonce | ECDH pub_k) | client nonce | server nonce | ECDH pub_k )
+    
+    signed_size = receive_msg(socket_conn, buffer);     // receive signed message
+	if(signed_size <= 0)               // verify the size of signed message received
+    	error("Error in receiving server signature.\n");
+	
+	// -- verify client nonce received from the server
+	unsigned int signature_size =*(unsigned int*)buffer;
+	signature_size += sizeof(unsigned int);                        // set pointer to nonce in the message
+	if(memcmp(buffer + signature_size, mynonce, NONCE_SIZE) != 0)    // verify the nonce sended by server
+    	error("Error: the nonce received by server is not valid!\n");
+	free(mynonce);             // delete nonce
+	
+	// -- Verify signature and take server nonce
+	message_size = digsign_verify(server_pub_k, buffer, signed_size, message);
+	if(message_size <= 0)                      // check if signature is valid or not
+    	error("Error: signature received is invalid!\n");
+	
+	unsigned char* server_nonce = (unsigned char*) malloc(NONCE_SIZE);  // allocate buffer for server nonce
+	if(!server_nonce)
+    	error("Error in Malloc for server nonce");
+	
+	memcpy(server_nonce,message + NONCE_SIZE,NONCE_SIZE);       // copy the nonce received from server in server nonce buffer
+    
+    // 3) Extract ECDH server public key
+    
+    BIO* ecdh_s_bio= BIO_new(BIO_s_mem());      // create BIO for the DH server public key
+    BIO_write(ecdh_s_bio, message + NONCE_SIZE + NONCE_SIZE, message_size - NONCE_SIZE - NONCE_SIZE);   // write in BIO the ECDH server public key contained in buffer
+	EVP_PKEY* ecdh_server_pubkey = PEM_read_bio_PUBKEY(ecdh_s_bio, NULL, NULL, NULL);   //read ECDH public key in PEM format from the BIO.
+	BIO_free(ecdh_s_bio);                       // free BIO for the DH server public key
+	
+	// -- create ECDH private key
+	EVP_PKEY* DH_privk = dh_generate_key();     // create ECDH private key
+	unsigned char* DH_pubk_buffer = NULL;       // buffer to ECDH pubk    
+	BIO* key_bio = BIO_new(BIO_s_mem());            // create BIO for the DH key
+    if(!key_bio) 
+        error("Error in the connection establishment: failed to allocate BIO_s_mem..\n");
+    
+    if(!PEM_write_bio_PUBKEY(key_bio, DH_privk))    // extract DH public key and serialize in BIO
+        error("Error in the connection establishment: failed to write_bio_PUBKEY.\n");
+	
+	long pubk_size = BIO_get_mem_data(key_bio, &DH_pubk_buffer);    // get size of server DH pubk
+    if (pubk_size <= 0) 
+        error("Error in the connection establishment: failed to BIO_get_mem_data.\n");
+	
+	message_size = 0;                              // reset message size to 0
+	memcpy(message, server_nonce, NONCE_SIZE);     // copy in message il server nonce
+	message_size += NONCE_SIZE;                    
+	memcpy(message + message_size, DH_pubk_buffer, pubk_size);	           // copy in message the ECDH client public key
+	message_size += keysize;
+	signed_size = digsign_sign(user_key, message, message_size, buffer);   // sign (server_nonce | ECDH client pubk)
+	
+	// -- send signed ECDH client public key
+	send_msg(socket_conn, signed_size, buffer);    // send message -> format is -> ( sign_size | sign() | server nonce | ECDH client pubk )
+	free(server_nonce);                            // free server nonce
+	
+	// -- compute the shared secret key
+	size_t shared_secret_len;                  // size of the shared secret len               
+	EVP_PKEY_CTX *derive_ctx;                  // create context to derive shared secret    
+	derive_ctx = EVP_PKEY_CTX_new(DH_privk, NULL);     // allocate a context
+	if (!derive_ctx) 
+    	handleErrors();
+    if (EVP_PKEY_derive_init(derive_ctx) <= 0)         // initialise the derivation context
+        handleErrors();
+    // use ECDH server public key for derive the shared secret
+    if (EVP_PKEY_derive_set_peer(derive_ctx, ecdh_server_pubkey) <= 0) 
+        handleErrors();
+	
+	// Determine buffer length, by performing a derivation but writing the result nowhere
+	EVP_PKEY_derive(derive_ctx, NULL, &shared_secret_len);
+	unsigned char* shared_secret = (unsigned char*)(malloc(int(shared_secret_len)));	
+	if (!shared_secret)
+    	error("Error in Malloc for the buffer for shared secret.\n");
+	// Perform again the derivation and store it in shared_secret buffer
+    if (EVP_PKEY_derive(derive_ctx, shared_secret, &shared_secret_len) <= 0)
+        error("Error in the connection establishment: failed to derive ECDH shared secret.\n");
+
+	// free everything involved with the exchange (excep shared secret)
+	EVP_PKEY_CTX_free(derive_ctx);         // free context
+	EVP_PKEY_free(ecdh_server_pubkey);     // free ECDH server public key
+	EVP_PKEY_free(DH_privk);               // free ECDH client private key
+	
+	// don't use directly the shared secret as a key because it does not have the entropy necessary to be a good symmetric key
+	unsigned char* session_key = (unsigned char*) malloc(EVP_MD_size(sign_alg));    // buffer to the session key , size = digest
+	if (!session_key) 
+    	error("Error in the connection establishment: failed session key malloc.\n");
+	
+	// create the session key (symmetric key)
+	ret = dh_generate_session_key(shared_secret, (unsigned int)shared_secret_len , session_key);
+	free(shared_secret);                   // free shared secret
+	
+	// 5 - receiving confirmation of successfully established session
+	// set nonce counters, at the beginning are equal to 0
+	unsigned int server_counter = 0,       // is the server nonce, is used to verify the nonce in the messages sent by the server
+	unsigned int client_counter = 0;       // is the client nonce, is used for nonce in the messages sent by the client
+	short cmd_code;                        // code of the command
+	unsigned int aad_len;                  // len of AAD
+	
+	// -- receive the message -> format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
+	message_size = receive_msg(socket_conn, buffer);           // receive confirmation or not
+	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+	{
+		ret = decryptor(buffer, message_size, session_key, cmd_code, aad, aad_len, message);
+		increment_counter(server_counter);            // increment the server nonce
+		if (ret >= 0)                         // correctly decrypted 
+		{
+    		// check the cmd_code received
+    		if (cmd_code != -1)               // all is ok
+    		{
+        		cout << aut_encr_conn_succ;       // print for user
+    		}
+    		else if (cmd_code == 1)
+    		{
+        		// print the list of the user file stored in the server 
+    		}
+		}
+    		//print_users_list(message,ret);
+	}
+	
+}
+
 // ------------------------------- end: connection function -------------------------------
 
 // ------------------------------- start: initial parameter control functions -------------------------------
@@ -217,7 +396,7 @@ EVP_PKEY* verify_server_cert( unsigned char* buffer, long buffer_size )
         - ip_server: server ip address
         - server_port: port for the connection
 */
-void open_server_connection(char* ip_server, int server_port)
+int open_server_connection(char* ip_server, int server_port)
 {
      unsigned short int p;              
      int ret;
@@ -244,6 +423,8 @@ void open_server_connection(char* ip_server, int server_port)
      ret = connect(socket_server, ( struct sockaddr *) &addr_server, sizeof(addr_server));
      if (ret<0)			
         error("Errore nella \"connect()\":");                  // connection error
+        
+    return socket_server;                   // return socketfd
 }
 
 /*
@@ -289,8 +470,21 @@ EVP_PKEY* check_username(char* username, char* username_buffer , int buffer_len)
 // Argument of the main must be: <program_name> <server ip> <server port> <username>
 int main(int argc, char *argv[])
 {
-    char username[USERNAME_SIZE];           // will contain the username of the client user (passed as a parameter)
+    char username[USERNAME_SIZE];           // contain the username of the client user (passed as a parameter)
     EVP_PKEY* user_key;                     // contain the private key of the user that uses the client 
+    int sockfd;                             // fd of the socket connected to the server
+
+    unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);   // utility buffer for the operation
+	if(!buffer)
+    	error("Error in buffer Malloc.\n");
+	
+	unsigned char* message = (unsigned char*)malloc(MAX_SIZE);  // buffer to contain the messages to be sent and received
+	if(!message)
+    	error("Error in message Malloc.\n");
+	
+	unsigned char* aad = (unsigned char*)malloc(MAX_SIZE);     // buffer for aad
+	if(!aad)
+    	error("Error in aad Malloc.\n")
 
     if (argc != 4)		//first control of the parameters, check that the correct number of parameters have been passed
     {
@@ -300,23 +494,16 @@ int main(int argc, char *argv[])
     
     user_key = check_username(argv[3],username,USERNAME_SIZE);  // control for the username 
        
-    open_server_connection(argv[1], atoi(argv[2]));		  // connection to the server
+    sockfd = open_server_connection(argv[1], atoi(argv[2]));		  // connection to the server
 	
 	//visualizza messaggio di connessione al server
     printf("Successful server connection, ip %s and port %s\n",argv[1],argv[2]);		
-    cout << mex_after_server_conn;                                   
+    cout << mex_after_server_conn;   
     
-    //Send nonce and username	
-    
-    //Verify server certificate		
-    
-    //receive signedmessage
-    
-    //verify signature and take server nonce	
-    
-    //extract ecdh_server_pubkey
-    
-    //generate ecdh_privkey												//visualizza il messaggio iniziale di descrizione dei comandi
+    // establish an authenticated and secure connection
+    start_authenticated_conn(sockfd, buffer, message, username, user_key, aad);
+    	
+    //visualizza il messaggio iniziale di descrizione dei comandi
 }
 
 /*

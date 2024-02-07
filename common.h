@@ -24,7 +24,7 @@
 #define MAX_SIZE 102400             // the maximum length for normal message (100 KBi)
 #define MSG_MAX 10000
 #define NONCE_SIZE 4                // size of the nonce
-#define MSG_NONCE_OFFSET 34         // offset of the nonce in the message format (nonce is after cmd_code,tag,IV,nonce_len)
+#define MSG_AAD_OFFSET 34           // offset of the AAD(usually only nonce) in the message format (AAD is after cmd_code,tag,IV,nonce_len)
 // ------------------------------- end: constant -------------------------------
 
 using namespace std;
