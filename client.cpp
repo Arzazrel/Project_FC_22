@@ -62,7 +62,7 @@ string CA_CRL_path = "ClientFiles/Certificates/FoC_Proj_CA_CRL.pem";        // p
 // ------------------------------- end: path -------------------------------
 
 // ------------------------------- start: messages -------------------------------
-string aut_encr_conn_succ = "Authenticated and encrypted connection with the server successfully established.\n";   // message that is displayed once the authenticated and encrypted connection with the server is successfully established
+string aut_encr_conn_succ = "\nAuthenticated and encrypted connection with the server successfully established.\n";   // message that is displayed once the authenticated and encrypted connection with the server is successfully established
 // -- errors
 string err_open_file = "Error: cannot open file.\n";       // error that occurs when a file cannot be opened
 
@@ -73,7 +73,7 @@ string err_open_file = "Error: cannot open file.\n";       // error that occurs 
 //   Description: function to print the legend of the command for the user
 void print_command_legend()
 {
-	cout<<"-----------------------------------------------------------\n";
+	cout<<"\n-----------------------------------------------------------\n";
 	cout<<"Available Operation:"<<"\n";
 	cout<<"--ex: exit program"<<"\n";
 	cout<<"--up <client_filename> <server_filename>: exit program"<<"\n";
@@ -93,10 +93,11 @@ void print_command_legend()
 */
 void print_files_list(unsigned char* buffer, unsigned int buffer_size)
 {
+	cout << "++++++++++++++++ dimesnione mex ricevuto: " << buffer_size << "\n";
 	cout << "--------------------------------------------------\n";
 	cout << "Files stored on the server: \n";
-	buffer[buffer_size - 1] = "\0";                // for secure
-	cout << buffer;                                // print the list of file
+	memcpy(buffer + buffer_size, "\0", 1);	// for secure
+	cout << buffer << "\n";                       // print the list of file
 }
 
 // ------------------------------- end: general function -------------------------------
@@ -239,6 +240,8 @@ EVP_PKEY* verify_server_cert( unsigned char* buffer, long buffer_size )
 void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned char* mex_buffer, char* username, EVP_PKEY* user_key, unsigned char* aad)
 {
     int message_size;               // size of the message to send  
+    int ret;
+    uint32_t network_number;
     
     // create client nonce (CN)
     unsigned char* mynonce=(unsigned char*)malloc(NONCE_SIZE);  // nonce created by client
@@ -249,24 +252,21 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	if(ret!=1)
     	error("Error in RAND_bytes.\n");
     
-    cout << "Username in started connection: " << username << " di dimensione: " << strlen(username) <<"\n";    //++++++++++++++++
-    cout << "Nonce in started connection: " << mynonce << "\n";    //++++++++++++++++
-    
     // Add nonce and username to buffer
     memcpy(buffer,mynonce,NONCE_SIZE);
 	memcpy(buffer+NONCE_SIZE,username,strlen(username));
 
     // 1) Send nonce and username -> messages format is -> ( size_sign | sign | nonce | username )
-    unsigned int signed_siz = digsign_sign(user_key, buffer, NONCE_SIZE+strlen(username),mex_buffer);
+    unsigned int signed_size = digsign_sign(user_key, buffer, NONCE_SIZE+strlen(username),mex_buffer);
 	send_msg(socket_conn, signed_size, mex_buffer);        // send the messages
     
     // 2.0) Receive server certificate	(sended by the server)	
-    ret = recv(sockfd, &networknumber, sizeof(uint32_t), 0);    // receive size of message
+    ret = recv(socket_conn, &network_number, sizeof(uint32_t), 0);    // receive size of message
 	if(ret <= 0)
     	error("Error in socket receive.\n");
 	
-	long certsize = ntohl(networknumber);                  // take size of the server certificate
-	cout<<"Server certificate Size: "<< certsize <<"\n";   // show dimension of certificate
+	long certsize = ntohl(network_number);                 // take size of the server certificate
+	cout<<"\nServer certificate Size: "<< certsize <<"\n";   // show dimension of certificate
 	
 	unsigned char* certbuffer = (unsigned char*) malloc(certsize); // allocate the buffer to receive the server certificate
 	if(!certbuffer)
@@ -282,7 +282,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	}
 	
 	// -- Verify server certificate and retrieve the server public key
-	EVP_PKEY* server_pub_k = verify_server_certificate( certbuffer, certsize );
+	EVP_PKEY* server_pub_k = verify_server_cert( certbuffer, certsize );
     
     // 2.1) Receive signed message from server, format -> ( sign_size | sign(client nonce | server nonce | ECDH pub_k) | client nonce | server nonce | ECDH pub_k )
     
@@ -298,7 +298,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	free(mynonce);             // delete nonce
 	
 	// -- Verify signature and take server nonce
-	message_size = digsign_verify(server_pub_k, buffer, signed_size, message);
+	message_size = digsign_verify(server_pub_k, buffer, signed_size, mex_buffer);
 	if(message_size <= 0)                      // check if signature is valid or not
     	error("Error: signature received is invalid!\n");
 	
@@ -306,17 +306,17 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	if(!server_nonce)
     	error("Error in Malloc for server nonce");
 	
-	memcpy(server_nonce,message + NONCE_SIZE,NONCE_SIZE);       // copy the nonce received from server in server nonce buffer
+	memcpy(server_nonce,mex_buffer + NONCE_SIZE,NONCE_SIZE);       // copy the nonce received from server in server nonce buffer
     
     // 3) Extract ECDH server public key
     
     BIO* ecdh_s_bio= BIO_new(BIO_s_mem());      // create BIO for the DH server public key
-    BIO_write(ecdh_s_bio, message + NONCE_SIZE + NONCE_SIZE, message_size - NONCE_SIZE - NONCE_SIZE);   // write in BIO the ECDH server public key contained in buffer
+    BIO_write(ecdh_s_bio, mex_buffer + NONCE_SIZE + NONCE_SIZE, message_size - NONCE_SIZE - NONCE_SIZE);   // write in BIO the ECDH server public key contained in buffer
 	EVP_PKEY* ecdh_server_pubkey = PEM_read_bio_PUBKEY(ecdh_s_bio, NULL, NULL, NULL);   //read ECDH public key in PEM format from the BIO.
 	BIO_free(ecdh_s_bio);                       // free BIO for the DH server public key
 	
 	// -- create ECDH private key
-	EVP_PKEY* DH_privk = dh_generate_key();     // create ECDH private key
+	EVP_PKEY* DH_privk = dh_gen_key();     // create ECDH private key
 	unsigned char* DH_pubk_buffer = NULL;       // buffer to ECDH pubk    
 	BIO* key_bio = BIO_new(BIO_s_mem());            // create BIO for the DH key
     if(!key_bio) 
@@ -330,11 +330,11 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
         error("Error in the connection establishment: failed to BIO_get_mem_data.\n");
 	
 	message_size = 0;                              // reset message size to 0
-	memcpy(message, server_nonce, NONCE_SIZE);     // copy in message il server nonce
+	memcpy(mex_buffer, server_nonce, NONCE_SIZE);     // copy in message il server nonce
 	message_size += NONCE_SIZE;                    
-	memcpy(message + message_size, DH_pubk_buffer, pubk_size);	           // copy in message the ECDH client public key
-	message_size += keysize;
-	signed_size = digsign_sign(user_key, message, message_size, buffer);   // sign (server_nonce | ECDH client pubk)
+	memcpy(mex_buffer + message_size, DH_pubk_buffer, pubk_size);	           // copy in message the ECDH client public key
+	message_size += pubk_size;
+	signed_size = digsign_sign(user_key, mex_buffer, message_size, buffer);   // sign (server_nonce | ECDH client pubk)
 	
 	// -- send signed ECDH client public key
 	send_msg(socket_conn, signed_size, buffer);    // send message -> format is -> ( sign_size | sign() | server nonce | ECDH client pubk )
@@ -377,7 +377,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	
 	// 5 - receiving confirmation of successfully established session
 	// set nonce counters, at the beginning are equal to 0
-	unsigned int server_counter = 0,       // is the server nonce, is used to verify the nonce in the messages sent by the server
+	unsigned int server_counter = 0;       // is the server nonce, is used to verify the nonce in the messages sent by the server
 	unsigned int client_counter = 0;       // is the client nonce, is used for nonce in the messages sent by the client
 	short cmd_code;                        // code of the command
 	unsigned int aad_len;                  // len of AAD
@@ -387,25 +387,27 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
 	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
 	{
-		ret = decryptor(buffer, message_size, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
-		increment_counter(server_counter);            // increment the server nonce
+		ret = decryptor(buffer, message_size, session_key, cmd_code, aad, aad_len, mex_buffer);  // decrypt the received message
+		inc_counter_nonce(server_counter);            // increment the server nonce
 		if (ret >= 0)                         // correctly decrypted 
 		{
     		// check the cmd_code received
     		if ((cmd_code != -1) && (cmd_code == 1))      // all is ok
     		{
-        		cout << aut_encr_conn_succ;       // print for user, message of successful authenticated and protected connection between client and server
-        		cout << HELP;                     // cout all avaible command and their explanations
-        		print_files_list(message, ret);   // print the list of the user file stored in the server 
+        		cout << aut_encr_conn_succ;          // print for user, message of successful authenticated and protected connection between client and server
+        		print_command_legend;                // cout all avaible command and their explanations
+        		print_files_list(mex_buffer, ret);   // print the list of the user file stored in the server 
     		}
     		else if (cmd_code == -1)                      // error message
     		{
-        		buffer[ret - 1] = "\0";           // for secure
-            	cerr << message;                  // print the error message
+    			memcpy(mex_buffer + ret - 1, "\0", 1);	// for secure
+            	cerr << mex_buffer;                  // print the error message
             	// +++++++++++++++++++++++++++ close connection +++++++++++++++++++
     		}
 		}
 	}
+	else
+		cerr << "Received nonce is not fresh.\n";
 	
 }
 
@@ -426,8 +428,11 @@ int open_server_connection(char* ip_server, int server_port)
      struct sockaddr_in addr_server;
      
      // check that the port value passed as a parameter is valid
-     if ((server_port < 0) || (server_port > 65535))					
-        error("Invalid port number: " + server_port + ".\n");
+     if ((server_port < 0) || (server_port > 65535))	
+     {
+     	cerr << "Invalid port number: " << server_port << ".\n";
+     	exit(1);
+     }				
         
      p = server_port;                       // the port is correct
      
@@ -475,7 +480,7 @@ EVP_PKEY* check_username(char* username, char* username_buffer , int buffer_len)
 	if(!file)                                              
 	    error("User does not have a key file. The user is not signed or the username isn't correct.\n");
 
-	user_key= PEM_read_PrivateKey(file, NULL, NULL, NULL);     // read the privk
+	user_key = PEM_read_PrivateKey(file, NULL, NULL, NULL);    // read the privk
 	if(!user_key) 
     	error("user_key Error\n");
 	fclose(file);                                              // close the file containing the privk
@@ -507,7 +512,7 @@ int main(int argc, char *argv[])
 	
 	unsigned char* aad = (unsigned char*)malloc(MAX_SIZE);     // buffer for aad
 	if(!aad)
-    	error("Error in aad Malloc.\n")
+    	error("Error in aad Malloc.\n");
 
     if (argc != 4)		//first control of the parameters, check that the correct number of parameters have been passed
     {

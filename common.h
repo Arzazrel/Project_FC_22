@@ -165,8 +165,8 @@ unsigned int digsign_sign(EVP_PKEY* priv_k, unsigned char* clear_buf, unsigned i
 	
 	// create the signature context:
 	EVP_MD_CTX* sign_ctx = EVP_MD_CTX_new();
-	if(!ctx)
-    	error("Error in digsign_sign: EVP_MD_CTX_new returned NULL.\n);
+	if(!sign_ctx)
+    	error("Error in digsign_sign: EVP_MD_CTX_new returned NULL.\n");
 	
 	ret = EVP_SignInit(sign_ctx, sign_alg);        // initialisation
 	if(ret == 0)
@@ -177,19 +177,19 @@ unsigned int digsign_sign(EVP_PKEY* priv_k, unsigned char* clear_buf, unsigned i
     	error("Error in digsign_sign: EVP_SignUpdate returned 0.\n");
 	
 	unsigned int sign_size;                    // size of the sign received from final
-	unsigned char* signature_buffer = (unsigned char*)malloc(EVP_PKEY_size(prvkey)); //buffer to contain priv_key
+	unsigned char* signature_buffer = (unsigned char*)malloc(EVP_PKEY_size(priv_k)); //buffer to contain priv_key
 	if(!signature_buffer)
     	error("Error in malloc signature buffer in digsign_sign.\n");
 	
-	ret = EVP_SignFinal(sign_ctx, signature_buffer, &sgnt_size, prvkey);   //final
+	ret = EVP_SignFinal(sign_ctx, signature_buffer, &sign_size, priv_k);   //final
 	if(ret == 0)
     	error("Error in digsign_sign: EVP_SignFinal returned 0.\n");
 	
 	unsigned int written=0;                    // size of the message written in the output buffer
-	memcpy(output_buffer,  (unsigned char *)&sgnt_size, sizeof(unsigned int)); // write in output buffer 
+	memcpy(output_buffer,  (unsigned char *)&sign_size, sizeof(unsigned int)); // write in output buffer 
 	written += sizeof(unsigned int);           // update size of the written message
-	memcpy(output_buffer + written, signature_buffer, sgnt_size);      // write the sign in output buffer 
-	written += sgnt_size;                      // update size of the written message
+	memcpy(output_buffer + written, signature_buffer, sign_size);      // write the sign in output buffer 
+	written += sign_size;                      // update size of the written message
 	memcpy(output_buffer + written, clear_buf, clear_size);            // write the clear message
 	written += clear_size;                     // update size of the written message
 	EVP_MD_CTX_free(sign_ctx);                 // free the context
@@ -229,7 +229,7 @@ int digsign_verify(EVP_PKEY* pub_k, unsigned char* input_buffer, unsigned int in
 	
 	// create the signature context:
 	EVP_MD_CTX* sign_ctx = EVP_MD_CTX_new();
-	if(!md_ctx)
+	if(!sign_ctx)
     	error("Error in digsign_verify: EVP_MD_CTX_new returned NULL.\n");
 
 	// verify the plaintext: (perform a single update on the whole plaintext, assuming that the plaintext is not huge)
@@ -275,29 +275,29 @@ EVP_PKEY* dh_gen_key()
 	
 	if(NULL == (PDH_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL))) // allocate context to ECDH
     	handleErrors();
-	if(1 != (EVP_PKEY_paramgen_init(PDHctx)))                      // generate key parameters, return 1 for success, 0 or <0 for failure
+	if(1 != (EVP_PKEY_paramgen_init(PDH_ctx)))                      // generate key parameters, return 1 for success, 0 or <0 for failure
     	handleErrors();
     //  sets the EC curve for EC parameter generation to nid. For EC parameter generation this macro must be called or an error occurs because there is no default curve. 
-	if(1!=(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(PDHctx, NID_X9_62_prime256v1))) 
+	if(1 != (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(PDH_ctx, NID_X9_62_prime256v1))) 
     	handleErrors();
-	if(!EVP_PKEY_paramgen(PDHctx, &params)) 
+	if(!EVP_PKEY_paramgen(PDH_ctx, &params)) 
     	handleErrors();
-	EVP_PKEY_CTX_free(PDHctx);     // delete context
+	EVP_PKEY_CTX_free(PDH_ctx);    // delete context
 	
     // generate a new key
 	EVP_PKEY_CTX* DH_ctx;          // create context for key generation
 	if(NULL == (DH_ctx = EVP_PKEY_CTX_new(params, NULL))) 
     	handleErrors();
 	EVP_PKEY* DH_key = NULL;       // create DH private key
-	if(1 != EVP_PKEY_keygen_init(DHctx)) 
+	if(1 != EVP_PKEY_keygen_init(DH_ctx)) 
     	handleErrors();
-	if(1 != EVP_PKEY_keygen(DHctx, &my_dhkey)) 
+	if(1 != EVP_PKEY_keygen(DH_ctx, &DH_key)) 
     	handleErrors();
-	EVP_PKEY_CTX_free(DHctx);      // delete context
+	EVP_PKEY_CTX_free(DH_ctx);      // delete context
 	
 	EVP_PKEY_free(params);
 	
-	return my_dhkey;               // return DH key
+	return DH_key;               // return DH key
 } 
 
 /*
@@ -331,7 +331,7 @@ unsigned int dh_generate_session_key(unsigned char* shared_secret, unsigned int 
     	error("Error in dh_generate_session_key: EVP_DigestFinal Error.\n");
 	EVP_MD_CTX_free(hash_ctx);         // free context
 	
-	return sessionkey_len;             // return the len of the session key
+	return session_key_len;            // return the len of the session key
 }
 
 // ------------------------------- end: functions for using the ECDH protocol for creating a shared secret key -------------------------------
@@ -435,7 +435,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
 	written += sizeof(unsigned int);           // update written offset
 	// -- write the nonce in output buffer
 	memcpy(output_buffer + written, aad, aad_len);
-	written += nonce_len;                      // update written offset
+	written += aad_len;                      // update written offset
 	// -- write the ciphertext in output buffer
 	memcpy(output_buffer + written, ciphertext, ciphertext_len);
 	written += ciphertext_len;                 // update written offset
@@ -524,7 +524,7 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
 	unsigned char* complete_aad=(unsigned char*)malloc(aad_len + cmd_code_size); // buffer to contain the complete AAD = ( cmd_code | nounce )
 	if(!complete_aad) 
     	error("Error in GCM (AES_128) decryptor: AAD malloc error.\n");
-	memcpy(complete_aad, &cmd_code,opsize);                    // copy cmd_code
+	memcpy(complete_aad, &cmd_code,cmd_code_size);                    // copy cmd_code
 	memcpy(complete_aad + cmd_code_size, output_aad, aad_len); // copy aad
 	// -- read ciphertext
 	unsigned int ciphertext_len = input_len - read;            // take ciphertext len
@@ -559,8 +559,7 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
     	handleErrors();
 	
 	// Finalise the decryption. A positive return value indicates success, anything else is a failure - the plaintext is not trustworthy.
-	ret = EVP_DecryptFinal(ctx, output_buffer + output_len, &len))
-    	handleErrors();
+	ret = EVP_DecryptFinal(ctx, output_buffer + output_len, &len);
 	
 	// free all 
 	EVP_CIPHER_CTX_free(ctx);  // free context
