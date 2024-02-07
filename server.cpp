@@ -48,6 +48,7 @@ struct Args
 };
 
 string mex_serv_listening = "Cloud server operative, waiting for client connection...\n";   // message to be shown after socket settings
+string mex_AE_conn_succ = "Successful authenticated and protected connection between client and server.\n";     // message of successful authenticated and protected connection between client and server
 
 // semaphores
 pthread_mutex_t users_mutex;            // semaphore for list<User> users
@@ -471,13 +472,17 @@ void *client_handler(void* arguments)
 	short cmd_code;                        // code of the command
 	unsigned int aad_len;                  // len of AAD
 	
+	// cout of the authenticated and protected connection message between client and server
+	cout << mex_AE_conn_succ << "Client: " << current_user->username << "\n";
+	
 	// send the list of the file in the dedicated stored of user
 	user_file_list (socket, current_user, session_key);
 	
 	// main cicle
 	while(1)
 	{
-    	
+    	// receive request from the client
+    	msg_size = receive_msg(socket,buffer);
 	}
 }
 // ------------------------------- end: function to manage registered user -------------------------------

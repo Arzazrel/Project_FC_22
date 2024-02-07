@@ -9,20 +9,46 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <iostream> 
-#include <stdio.h>  // for fopen(), etc.
-#include <limits.h> // for INT_MAX
-#include <string.h> // for memset()
+#include <stdio.h>                  // for fopen(), etc.
+#include <limits.h>                 // for INT_MAX
+#include <string.h>                 // for memset()
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509_vfy.h>
 #include <openssl/err.h>
-#include "common.h"
 #include <arpa/inet.h>
+// my library
+#include "common.h"                 // 
+
+// ------------------------------- start: constant -------------------------------
+#define MAX_DIM_COMANDI 10          // maximum length for a command name
+
+// -- for help command -- various define containing explanations to be printed for the help command
+#define HELP "The following commands are available: \n !help <command> --> show details of a command \n"
+#define HELP_HELP "!help <command> --> show details of the specified command \n"
+
+#define HELP_LIST "!list --> \n"
+#define HELP_DOWNLOAD "!download <> --> \n"
+#define HELP_UPLOAD "!upload --> \n"
+#define HELP_RENAME "!rename --> \n"
+#define HELP_DELETE "!delete <> --> \n"
+#define HELP_LOGOUT "!logout --> \n"
+// ------------------------------- end: constant -------------------------------
 
 // ------------------------------- start: struct and global variables -------------------------------
 int socket_server, fdmax, stato;	//variabili per contenere una il fd del socket del server e l'altra per contenere l'fd maggiore nella lista della select,
 									//stato conterrà il numero che identificherà qual è stato l'ultimo comando fatto dal client da cui si aspetta una risposta dal server
 									//il valore di stato identifica il comando di posizione comandi[stato]
+
+// matrix containing all the commands recognised by the client
+char command[][ MAX_DIM_COMANDI ]={"!help",
+                   					"!list",
+                   					"!download",
+                   					"!upload",
+                   					"!rename",
+                   					"!delete",
+                   					"!logout"};
+
 // message to be shown to the user after the first connection to the server but before authentication and the session is established.
 string mex_after_server_conn = "Server authentication in progress...\n";  
 // ------------------------------- end: struct and global variables -------------------------------
@@ -65,18 +91,12 @@ void print_command_legend()
         - buffer: buffer conatining the list of the file stored on the server
         - buffer_size: the size of the buffer 
 */
-void  print_files_list(unsigned char* buffer, unsigned int buffer_size)
+void print_files_list(unsigned char* buffer, unsigned int buffer_size)
 {
-	cout<<"--------------------------------------------------\n";
-	cout<<"Files stored on the server: \n";
-	unsigned int read=0;
-	/*
-	char nickname[USERNAME_SIZE];
-	while(read<buffer_size){
-	read+=snprintf(nickname,sizeof(nickname),"%s",buffer+read);
-	printf("%s \n",nickname);
-	read++;
-	*/
+	cout << "--------------------------------------------------\n";
+	cout << "Files stored on the server: \n";
+	buffer[buffer_size - 1] = "\0";                // for secure
+	cout << buffer;                                // print the list of file
 }
 
 // ------------------------------- end: general function -------------------------------
@@ -367,21 +387,24 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
 	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
 	{
-		ret = decryptor(buffer, message_size, session_key, cmd_code, aad, aad_len, message);
+		ret = decryptor(buffer, message_size, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
 		increment_counter(server_counter);            // increment the server nonce
 		if (ret >= 0)                         // correctly decrypted 
 		{
     		// check the cmd_code received
-    		if (cmd_code != -1)               // all is ok
+    		if ((cmd_code != -1) && (cmd_code == 1))      // all is ok
     		{
-        		cout << aut_encr_conn_succ;       // print for user
+        		cout << aut_encr_conn_succ;       // print for user, message of successful authenticated and protected connection between client and server
+        		cout << HELP;                     // cout all avaible command and their explanations
+        		print_files_list(message, ret);   // print the list of the user file stored in the server 
     		}
-    		else if (cmd_code == 1)
+    		else if (cmd_code == -1)                      // error message
     		{
-        		// print the list of the user file stored in the server 
+        		buffer[ret - 1] = "\0";           // for secure
+            	cerr << message;                  // print the error message
+            	// +++++++++++++++++++++++++++ close connection +++++++++++++++++++
     		}
 		}
-    		//print_users_list(message,ret);
 	}
 	
 }
@@ -502,8 +525,12 @@ int main(int argc, char *argv[])
     
     // establish an authenticated and secure connection
     start_authenticated_conn(sockfd, buffer, message, username, user_key, aad);
-    	
-    //visualizza il messaggio iniziale di descrizione dei comandi
+    
+    // main while	
+    while(1)
+    {
+        
+    }
 }
 
 /*
