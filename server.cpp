@@ -167,12 +167,11 @@ void send_user_file_list(int socket,  User* current_user, unsigned char* session
     if ( n <= 2)	// folder is empty 
     {
     	 char temp[] = "Dedicated stored empty.\n";
-    	 msg_len = strlen(temp);			// update msg_len
-    	 cout << "++++++++++++++++++ msg_len con cartella vuota: " << msg_len << "\n";
-    	 message = (unsigned char*)malloc(msg_len+1);
+    	 msg_len = strlen(temp) + 1;			// update msg_len
+    	 message = (unsigned char*)malloc(msg_len);
     	 if(!message)
         	error("Error in user_file_list: message Malloc error.\n");
-    	 memcpy(message, temp, strlen(temp));        // copy in message
+    	 memcpy(message, temp, msg_len);        // copy in message
     }
     else    // there are files in the dedicated storage
     {
@@ -199,12 +198,10 @@ void send_user_file_list(int socket,  User* current_user, unsigned char* session
         	memcpy(message + msg_len, "\n", 1);
         	msg_len += 1;                          // update msg_len of 1
     	}
-    	memcpy(message + msg_len - 1, "\0", 1);  
-    	
-    	cout << "++++++++++++++++++ msg_len con cartella non vuota: " << msg_len << "\n";      
+    	memcpy(message + msg_len - 1, "\0", 1);       
     }
     
-    cout << "user_file_list message: " << message << "++++++\n";      // +++++++++++++ test mode +++++++++++++
+    cout << "++++++ user_file_list message: " << message << "\n";      // +++++++++++++ test mode +++++++++++++
     
     // send message
     unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
@@ -219,7 +216,6 @@ void send_user_file_list(int socket,  User* current_user, unsigned char* session
 	if(!buffer)
     	error("Error in user_file_list: buffer Malloc error.\n");
 	
-	cout << "++++++++++++++++++++++ ENCRYPT +++++++++++++++++++";
 	// encrypt the message, cmd_code for the operation list is 1
 	ret = encryptor(1,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
 	if (ret >= 0)      // successfully encrypted

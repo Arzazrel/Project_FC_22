@@ -93,7 +93,6 @@ void print_command_legend()
 */
 void print_files_list(unsigned char* buffer, unsigned int buffer_size)
 {
-	cout << "++++++++++++++++ dimesnione mex ricevuto: " << buffer_size << "\n";
 	cout << "--------------------------------------------------\n";
 	cout << "Files stored on the server: \n";
 	memcpy(buffer + buffer_size, "\0", 1);	// for secure
@@ -395,7 +394,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
     		if ((cmd_code != -1) && (cmd_code == 1))      // all is ok
     		{
         		cout << aut_encr_conn_succ;          // print for user, message of successful authenticated and protected connection between client and server
-        		print_command_legend;                // cout all avaible command and their explanations
+        		print_command_legend();                // cout all avaible command and their explanations
         		print_files_list(mex_buffer, ret);   // print the list of the user file stored in the server 
     		}
     		else if (cmd_code == -1)                      // error message
