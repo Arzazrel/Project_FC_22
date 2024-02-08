@@ -21,18 +21,21 @@
 #include "common.h"                 // 
 
 // ------------------------------- start: constant -------------------------------
-#define MAX_DIM_COMANDI 10          // maximum length for a command name
+// -- for reading commands from the command line, the maximum size prevents the entry of too many characters. The commands are few and fixed and with few arguments.
+#define NUM_COMMAND 7               // number of avaible commands
+#define MAX_DIM_COMMAND 10          // maximum length for a command name
+#define MAX_DIM_PAR 100             // maximum length for a command parameter. The arguments are always file_names, a size of 100 each is more than sufficient for most legitimate cases.
+#define MAX_NUM_PAR 2			    // maximum number of parameters that a command can have
 
 // -- for help command -- various define containing explanations to be printed for the help command
-#define HELP "The following commands are available: \n !help <command> --> show details of a command \n"
-#define HELP_HELP "!help <command> --> show details of the specified command \n"
-
-#define HELP_LIST "!list --> \n"
-#define HELP_DOWNLOAD "!download <> --> \n"
-#define HELP_UPLOAD "!upload --> \n"
-#define HELP_RENAME "!rename --> \n"
-#define HELP_DELETE "!delete <> --> \n"
-#define HELP_LOGOUT "!logout --> \n"
+#define HELP "\nThe following commands are available: \n !help <command> --> show details of a command.\n !list --> asks the server for the list of saved files and prints it in the terminal.\n !download <file_name> --> Download the file specified as an argument by name from the cloud server. The file will be saved on the client with the same name it had on the server, the name passed as argument. If a file with the same name already exists on the client, the download will fail and the file will not be downloaded from the server.\n !upload <file_name> --> Uploads the file specified as an argument by name to the cloud server. The file will be saved on the server with the same name it had on the client, the name passed as an argument. If a file with the same name already exists on the server, the upload will fail and the file will not be sent from the server.\n !rename <old_file_name> <new_file_name> --> Changes the name of a file on the server to the new name passed as a parameter. If a file with the same name as the new name specified already exists in the cloud server, the name change will fail.\n !delete <file_name> --> Deletes the file specified by name passed as a parameter from the cloud server.\n !logout --> disconnects from the server and closes the program.\n"
+#define HELP_HELP "!help <command> --> Show details of the specified command.\n"
+#define HELP_LIST "!list --> Asks the server for the list of saved files and prints it in the terminal.\n"
+#define HELP_DOWNLOAD "!download <file_name> --> Download the file specified as an argument by name from the cloud server. The file will be saved on the client with the same name it had on the server, the name passed as argument. If a file with the same name already exists on the client, the download will fail and the file will not be downloaded from the server.\n"
+#define HELP_UPLOAD "!upload <file_name> --> Uploads the file specified as an argument by name to the cloud server. The file will be saved on the server with the same name it had on the client, the name passed as an argument. If a file with the same name already exists on the server, the upload will fail and the file will not be sent from the server.\n"
+#define HELP_RENAME "!rename <old_file_name> <new_file_name> --> Changes the name of a file on the server to the new name passed as a parameter. If a file with the same name as the new name specified already exists in the cloud server, the name change will fail.\n"
+#define HELP_DELETE "!delete <file_name> --> Deletes the file specified by name passed as a parameter from the cloud server.\n"
+#define HELP_LOGOUT "!logout --> disconnects from the server and closes the program.\n"
 // ------------------------------- end: constant -------------------------------
 
 // ------------------------------- start: struct and global variables -------------------------------
@@ -40,17 +43,15 @@ int socket_server, fdmax, stato;	//variabili per contenere una il fd del socket 
 									//stato conterrà il numero che identificherà qual è stato l'ultimo comando fatto dal client da cui si aspetta una risposta dal server
 									//il valore di stato identifica il comando di posizione comandi[stato]
 
-// matrix containing all the commands recognised by the client
-char command[][ MAX_DIM_COMANDI ]={"!help",
-                   					"!list",
-                   					"!download",
+// matrix containing all the commands recognised by the client, sorted by their respective cmd_code.
+char commands[][ MAX_DIM_COMANDI ]={"!logout",
+                                    "!list",
                    					"!upload",
+                   					"!download",
                    					"!rename",
                    					"!delete",
-                   					"!logout"};
-
-// message to be shown to the user after the first connection to the server but before authentication and the session is established.
-string mex_after_server_conn = "Server authentication in progress...\n";  
+                   					"!help"};
+                   					
 // ------------------------------- end: struct and global variables -------------------------------
 
 // ------------------------------- start: path -------------------------------
@@ -62,28 +63,35 @@ string CA_CRL_path = "ClientFiles/Certificates/FoC_Proj_CA_CRL.pem";        // p
 // ------------------------------- end: path -------------------------------
 
 // ------------------------------- start: messages -------------------------------
+// message to be shown to the user after the first connection to the server but before authentication and the session is established.
+string mex_after_server_conn = "Server authentication in progress...\n"; 
+string mex_ready_command = "Please enter the command you want.\n";   // message to be displayed to notify the user that he/she can enter commands 
 string aut_encr_conn_succ = "\nAuthenticated and encrypted connection with the server successfully established.\n";   // message that is displayed once the authenticated and encrypted connection with the server is successfully established
 // -- errors
-string err_open_file = "Error: cannot open file.\n";       // error that occurs when a file cannot be opened
+string err_open_file = "Error: cannot open file.\n";                // error that occurs when a file cannot be opened
+string err_command = "Error: command entered incorrect, please try again.\n";   // error that occurs when an entered command is incorrect
+string err_wrong_num_par = "Error in the number of parameters passed.\n";       // error that occurs when the number of parameter is incorrect
+string err_dim_par = "Error in the dimension of parameters passed.\n";          // error that occurs when the dimension of parameter is too big
 
 // ------------------------------- end: messages -------------------------------
 
 // ------------------------------- start: general function -------------------------------
-
 //   Description: function to print the legend of the command for the user
 void print_command_legend()
 {
-	cout<<"\n-----------------------------------------------------------\n";
-	cout<<"Available Operation:"<<"\n";
-	cout<<"--ex: exit program"<<"\n";
-	cout<<"--up <client_filename> <server_filename>: exit program"<<"\n";
-	cout<<"--dw <filename>: download a specified file stored on the server"<<"\n";
-	cout<<"--del <filename>: delete a specified file stored on the server"<<"\n";
-	cout<<"--l: print the list of the file stored on the server"<<"\n";
-	cout<<"--r <old_filename> <new_filename>: rename a file stored on the server"<<"\n";
-	cout<<"--help: print avaiable operation list"<<"\n";
+	cout << "\n-----------------------------------------------------------\n";
+	cout << HELP_LIST;
+	cout << HELP_DOWNLOAD;
+	cout << HELP_UPLOAD;
+	cout << HELP_RENAME;
+	cout << HELP_DELETE;
+	cout << HELP_LOGOUT;
+	cout << HELP_HELP;
+	cout << "-----------------------------------------------------------\n";
 }
+// ------------------------------- end: general function -------------------------------
 
+// ------------------------------- start: functions to perform user commands -------------------------------
 /*
     Description:  
         function to print the list of the files stored in the server, for the user logged in this client.
@@ -95,14 +103,175 @@ void print_files_list(unsigned char* buffer, unsigned int buffer_size)
 {
 	cout << "--------------------------------------------------\n";
 	cout << "Files stored on the server: \n";
-	memcpy(buffer + buffer_size, "\0", 1);	// for secure
+	memcpy(buffer + buffer_size - 1, "\0", 1);	  // for secure
 	cout << buffer << "\n";                       // print the list of file
 }
+// ------------------------------- end: functions to perform user commands -------------------------------
 
-// ------------------------------- end: general function -------------------------------
+
+
+// ------------------------------- start: functions to manage user entering of commands -------------------------------
+/*
+    Description:  
+        function to identify the command inserted by the user
+    Parameters:
+        - s: string containing the entered command by user
+    Return:
+        - int that rapresent the position that the command has in the commands matrix 
+*/
+int identify_command(char *s)		
+{
+     int i;
+     for (i=0; i < NUM_COMMAND ; i++)
+          if (!strcmp(commands[i], s))
+             return i;                      // command identified, return its position in the matrix, which corresponds to its cmd_code
+     return -1;							    // comand not identified, return -1
+}
+
+/*
+    Description:  
+        function to print out the correct help string, based on the command passed as a parameter in the help
+    Parameters:
+        - command: string containing the command passed as parameter in the help
+*/
+void help(char* command)
+{
+    // switch for paremeter recognition
+	switch (identify_command(command))			
+    {
+    	case 0:    // exit/logout -> no parameters
+            {
+                cout << HELP_LOGOUT;
+                break;
+            }
+        case 1:    // list -> no parameters
+            {
+                cout << HELP_LIST;
+                break;
+            }
+        case 2:    // upload -> 1 parameter
+            {
+            	cout << HELP_UPLOAD;
+                break;
+            }
+        case 3:    // download -> 1 parameter
+            {
+                cout << HELP_DOWNLOAD;
+                break;
+            }
+        case 4:    // rename -> 2 parameters
+            {
+                cout << HELP_RENAME;
+                break;
+            }
+        case 5:    // delete -> 1 parameter
+            {
+                cout << HELP_DELETE;
+                break;
+            }
+        case 6:    // help -> 0/1 parameter
+            {
+                cout << HELP_HELP;
+                break;
+            }
+        default:
+            {
+                cerr << err_command;       // print error mex
+            }
+	}
+}	
+
+//    Description:  function that reads the keyboard command, identifies it and performs the necessary operations to fulfil it if the command is recognised
+int read_command()				
+{
+    int command_code = 0;
+    char buf [ MAX_DIM_COMMAND + (MAX_DIM_PAR * MAX_NUM_PAR) ];    // buffer to contain the line inserted by user
+    char command [ MAX_DIM_COMMAND ];                              // char to contain the command inserted
+    char parameters [ MAX_NUM_PAR ][ MAX_DIM_PAR ];		        // contains the arguments of the command
+    // tells how many strings have been typed spaced with a space, it is used to know how many arguments have been entered
+    int num_string_readed;				
+     
+    // get the command and the arguments
+    char *res = fgets(buf, MAX_DIM_COMMAND + (MAX_DIM_PAR * MAX_NUM_PAR), stdin); // reads at most the specified number of characters (including \n)
+    if (res == 0)  // error while reading or read zero bytes (i.e. pressed ctrl+d as first character)
+	{
+        cerr << "stdin read error.\n";
+    	return NULL;                      // return to main loop to perform again the fgets 
+	}
+	 
+	// take the command and the parameters and counts them
+	// reads the commands and any parameters, the number of %s are equal to MAX_NUM_PAR + 1 (command)
+	num_string_readed = sscanf(buf, "%s %s %s", command, parameters[0],parameters[1]);    
+     
+    command_code = identify_command(command);       // call function to identify the entered command. 
+    // Switch which, depending on the parameter entered by the user, will perform the necessary operations to execute it.
+    switch(command_code)
+    {
+        case 0:    // exit/logout -> no parameters
+             {
+                 // send message to close the connection
+                 break;
+             }
+        case 1:    // list -> no parameters
+             {
+                 break;
+             }
+        case 2:    // upload -> 1 parameter
+             {
+                 break;
+             }
+        case 3:    // download -> 1 parameter
+             {
+                 break;
+             }
+        case 4:    // rename -> 2 parameters
+             {
+                char old_file_name [MAX_DIM_PAR] , new_file_name [MAX_DIM_PAR];         //conterranno l'username e psw digitati da tastiera
+               	
+               	if (num_string_readed == 3)
+               	{
+                   	if ((strlen(parametro[0]) > MAX_DIM_PAR) || (strlen(parametro[1]) > MAX_DIM_PAR))     // other dimension check of the parameters
+                   	{
+                       	cerr << err_dim_par;        // print error mex
+                   	}
+                   	else
+                   	{
+                       	sscanf(parametro[0], "%s", old_file_name);  // take old file name
+       					sscanf(parametro[1], "%s", new_file_name);  // take new file name
+       					// call function
+                   	}
+               	}
+               	else
+                   	cerr << err_wrong_num_par;      // return error mex
+       	
+                break;
+             }
+        case 5:    // delete -> 1 parameter
+             {
+                break;
+             }
+        case 6:    // help -> 0/1 parameter
+             {
+                if (num_string_readed == 2)		   // read command and parameter
+      			    help(parameters[0]);		   // call the help function with one parameter
+          		else if (num_string_readed == 1)   // entered only the command
+      			    cout << HELP;                  // call the help function without parameter
+          		else
+              		cerr << err_wrong_num_par;
+                break;
+             }
+        default:
+             {
+                 cerr << err_command;       // print error mex
+                 return NULL;               // return to main loop to perform again the fgets 
+             }
+    }
+     
+    return command_code;        // return cmd_code of the command
+}
+// ------------------------------- start: functions to manage user entering of commands -------------------------------
 
 // ------------------------------- start: connection function -------------------------------
-
 /*
     Description:  
         function to authenticate the server (through the control of its certifier and the authentication of its public key)
@@ -394,7 +563,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
     		if ((cmd_code != -1) && (cmd_code == 1))      // all is ok
     		{
         		cout << aut_encr_conn_succ;          // print for user, message of successful authenticated and protected connection between client and server
-        		print_command_legend();                // cout all avaible command and their explanations
+        		print_command_legend();              // cout all avaible command and their explanations
         		print_files_list(mex_buffer, ret);   // print the list of the user file stored in the server 
     		}
     		else if (cmd_code == -1)                      // error message
@@ -409,7 +578,6 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 		cerr << "Received nonce is not fresh.\n";
 	
 }
-
 // ------------------------------- end: connection function -------------------------------
 
 // ------------------------------- start: initial parameter control functions -------------------------------
@@ -530,10 +698,18 @@ int main(int argc, char *argv[])
     // establish an authenticated and secure connection
     start_authenticated_conn(sockfd, buffer, message, username, user_key, aad);
     
-    // main while	
+    cout << mex_ready_command;              // show to user that the command line is ready to take commands
+    
+    int i = 1;                  // take the cmd_code of the command entered by user
+    // main while, 
     while(1)
     {
-        
+        i = read_command();         // take the command
+        if (i == 0)         //
+        {
+            close(sockfd);  // close socket
+            exit(0);        // close program
+        }
     }
 }
 
