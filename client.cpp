@@ -106,6 +106,19 @@ void print_files_list(unsigned char* buffer, unsigned int buffer_size)
 	memcpy(buffer + buffer_size - 1, "\0", 1);	  // for secure
 	cout << buffer << "\n";                       // print the list of file
 }
+
+/*
+    Description:  
+        function to send the request to close the connection with the server
+    Parameters:
+        - buffer: buffer conatining the list of the file stored on the server
+        - buffer_size: the size of the buffer 
+*/
+void send_close_conn_request(unsigned char* buffer, unsigned int buffer_size)
+{
+	cout << "Send request to close the server connection...\n";
+	
+}
 // ------------------------------- end: functions to perform user commands -------------------------------
 
 
@@ -182,7 +195,7 @@ void help(char* command)
 }	
 
 //    Description:  function that reads the keyboard command, identifies it and performs the necessary operations to fulfil it if the command is recognised
-int read_command()				
+void read_command()				
 {
     int command_code = 0;
     char buf [ MAX_DIM_COMMAND + (MAX_DIM_PAR * MAX_NUM_PAR) ];    // buffer to contain the line inserted by user
@@ -210,6 +223,8 @@ int read_command()
         case 0:    // exit/logout -> no parameters
              {
                  // send message to close the connection
+                 close(socket_server);  // close socket
+                 exit(0);               // close program
                  break;
              }
         case 1:    // list -> no parameters
@@ -267,8 +282,6 @@ int read_command()
                  return NULL;               // return to main loop to perform again the fgets 
              }
     }
-     
-    return command_code;        // return cmd_code of the command
 }
 // ------------------------------- start: functions to manage user entering of commands -------------------------------
 
@@ -428,10 +441,10 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 
     // 1) Send nonce and username -> messages format is -> ( size_sign | sign | nonce | username )
     unsigned int signed_size = digsign_sign(user_key, buffer, NONCE_SIZE+strlen(username),mex_buffer);
-	send_msg(socket_conn, signed_size, mex_buffer);        // send the messages
+	send_msg(socket_server, signed_size, mex_buffer);        // send the messages
     
     // 2.0) Receive server certificate	(sended by the server)	
-    ret = recv(socket_conn, &network_number, sizeof(uint32_t), 0);    // receive size of message
+    ret = recv(socket_server, &network_number, sizeof(uint32_t), 0);    // receive size of message
 	if(ret <= 0)
     	error("Error in socket receive.\n");
 	
@@ -445,7 +458,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	unsigned int received = 0;             // set the quantity received to 0
 	while(received < certsize)             // while to read the whole server certificate
 	{
-		ret = recv(socket_conn, certbuffer+received, certsize-received, 0);	// receive server certificate
+		ret = recv(socket_server, certbuffer+received, certsize-received, 0);	// receive server certificate
 		if(ret < 0)
     		error("Error in server certificate receive.\n");
 		received += ret;                  // update received
@@ -456,7 +469,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
     
     // 2.1) Receive signed message from server, format -> ( sign_size | sign(client nonce | server nonce | ECDH pub_k) | client nonce | server nonce | ECDH pub_k )
     
-    signed_size = receive_msg(socket_conn, buffer);     // receive signed message
+    signed_size = receive_msg(socket_server, buffer);     // receive signed message
 	if(signed_size <= 0)               // verify the size of signed message received
     	error("Error in receiving server signature.\n");
 	
@@ -507,7 +520,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	signed_size = digsign_sign(user_key, mex_buffer, message_size, buffer);   // sign (server_nonce | ECDH client pubk)
 	
 	// -- send signed ECDH client public key
-	send_msg(socket_conn, signed_size, buffer);    // send message -> format is -> ( sign_size | sign() | server nonce | ECDH client pubk )
+	send_msg(socket_server, signed_size, buffer);    // send message -> format is -> ( sign_size | sign() | server nonce | ECDH client pubk )
 	free(server_nonce);                            // free server nonce
 	
 	// -- compute the shared secret key
@@ -549,7 +562,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	unsigned int aad_len;          // len of AAD
 	
 	// -- receive the message -> format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
-	message_size = receive_msg(socket_conn, buffer);           // receive confirmation or not
+	message_size = receive_msg(socket_server, buffer);           // receive confirmation or not
 	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
 	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
 	{
@@ -586,7 +599,7 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
         - ip_server: server ip address
         - server_port: port for the connection
 */
-int open_server_connection(char* ip_server, int server_port)
+void open_server_connection(char* ip_server, int server_port)
 {
      unsigned short int p;              
      int ret;
@@ -616,8 +629,6 @@ int open_server_connection(char* ip_server, int server_port)
      ret = connect(socket_server, ( struct sockaddr *) &addr_server, sizeof(addr_server));
      if (ret<0)			
         error("Errore nella \"connect()\":");                  // connection error
-        
-    return socket_server;                   // return socketfd
 }
 
 /*
@@ -689,9 +700,9 @@ int main(int argc, char *argv[])
        exit(1);
     }
     
-    user_key = check_username(argv[3],username,USERNAME_SIZE);  // control for the username 
+    user_key = check_username(argv[3],username,USERNAME_SIZE); // control for the username 
        
-    sockfd = open_server_connection(argv[1], atoi(argv[2]));		  // connection to the server
+    open_server_connection(argv[1], atoi(argv[2]));		       // connection to the server
 	
 	//visualizza messaggio di connessione al server
     printf("Successful server connection, ip %s and port %s\n",argv[1],argv[2]);		
@@ -706,12 +717,7 @@ int main(int argc, char *argv[])
     // main while, 
     while(1)
     {
-        i = read_command();         // take the command
-        if (i == 0)         //
-        {
-            close(sockfd);  // close socket
-            exit(0);        // close program
-        }
+        read_command();         // take the command
     }
 }
 
