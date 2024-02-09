@@ -39,9 +39,9 @@
 // ------------------------------- end: constant -------------------------------
 
 // ------------------------------- start: struct and global variables -------------------------------
-int socket_server, fdmax, stato;	//variabili per contenere una il fd del socket del server e l'altra per contenere l'fd maggiore nella lista della select,
-									//stato conterrà il numero che identificherà qual è stato l'ultimo comando fatto dal client da cui si aspetta una risposta dal server
-									//il valore di stato identifica il comando di posizione comandi[stato]
+int socket_server;	                   // variable to contain the server socket fd
+unsigned int server_counter = 0;       // is the server nonce, is used to verify the nonce in the messages sent by the server
+unsigned int client_counter = 0;       // is the client nonce, is used for nonce in the messages sent by the client
 
 // matrix containing all the commands recognised by the client, sorted by their respective cmd_code.
 char commands[][ MAX_DIM_COMANDI ]={"!logout",
@@ -68,7 +68,7 @@ string mex_after_server_conn = "Server authentication in progress...\n";
 string mex_ready_command = "Please enter the command you want.\n";   // message to be displayed to notify the user that he/she can enter commands 
 string aut_encr_conn_succ = "\nAuthenticated and encrypted connection with the server successfully established.\n";   // message that is displayed once the authenticated and encrypted connection with the server is successfully established
 // -- errors
-string err_open_file = "Error: cannot open file.\n";                // error that occurs when a file cannot be opened
+string err_open_file = "Error: cannot open file.\n";                            // error that occurs when a file cannot be opened
 string err_command = "Error: command entered incorrect, please try again.\n";   // error that occurs when an entered command is incorrect
 string err_wrong_num_par = "Error in the number of parameters passed.\n";       // error that occurs when the number of parameter is incorrect
 string err_dim_par = "Error in the dimension of parameters passed.\n";          // error that occurs when the dimension of parameter is too big
@@ -214,6 +214,7 @@ int read_command()
              }
         case 1:    // list -> no parameters
              {
+                 
                  break;
              }
         case 2:    // upload -> 1 parameter
@@ -404,10 +405,11 @@ EVP_PKEY* verify_server_cert( unsigned char* buffer, long buffer_size )
         - username: username of the user that uses the client
         - user_key: the private key of the user
         - aad: buffer to allocate aad
+        - session_key: buffer to contain the symmetric session key
 */
-void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned char* mex_buffer, char* username, EVP_PKEY* user_key, unsigned char* aad)
+void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned char* mex_buffer, char* username, EVP_PKEY* user_key, unsigned char* aad, unsigned char* session_key)
 {
-    int message_size;               // size of the message to send  
+    int message_size;               // size of the message to send or received 
     int ret;
     uint32_t network_number;
     
@@ -535,20 +537,16 @@ void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned c
 	EVP_PKEY_free(DH_privk);               // free ECDH client private key
 	
 	// don't use directly the shared secret as a key because it does not have the entropy necessary to be a good symmetric key
-	unsigned char* session_key = (unsigned char*) malloc(EVP_MD_size(sign_alg));    // buffer to the session key , size = digest
-	if (!session_key) 
-    	error("Error in the connection establishment: failed session key malloc.\n");
-	
 	// create the session key (symmetric key)
 	ret = dh_generate_session_key(shared_secret, (unsigned int)shared_secret_len , session_key);
 	free(shared_secret);                   // free shared secret
 	
 	// 5 - receiving confirmation of successfully established session
 	// set nonce counters, at the beginning are equal to 0
-	unsigned int server_counter = 0;       // is the server nonce, is used to verify the nonce in the messages sent by the server
-	unsigned int client_counter = 0;       // is the client nonce, is used for nonce in the messages sent by the client
-	short cmd_code;                        // code of the command
-	unsigned int aad_len;                  // len of AAD
+	server_counter = 0;            // is the server nonce, is used to verify the nonce in the messages sent by the server
+	client_counter = 0;            // is the client nonce, is used for nonce in the messages sent by the client
+	short cmd_code;                // code of the command
+	unsigned int aad_len;          // len of AAD
 	
 	// -- receive the message -> format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
 	message_size = receive_msg(socket_conn, buffer);           // receive confirmation or not
@@ -680,6 +678,10 @@ int main(int argc, char *argv[])
 	unsigned char* aad = (unsigned char*)malloc(MAX_SIZE);     // buffer for aad
 	if(!aad)
     	error("Error in aad Malloc.\n");
+    	
+    unsigned char* session_key = (unsigned char*) malloc(EVP_MD_size(sign_alg));    // buffer to the session key , size = digest
+	if (!session_key) 
+    	error("Error in session key malloc.\n");
 
     if (argc != 4)		//first control of the parameters, check that the correct number of parameters have been passed
     {
