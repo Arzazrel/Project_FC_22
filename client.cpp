@@ -412,7 +412,6 @@ EVP_PKEY* verify_server_cert( unsigned char* buffer, long buffer_size )
         function to authenticate the client and server to establish a secure, authenticated connection 
         between client and server. (First communication after connecting the sockets)
     Parameters:
-        - socket_conn: fd of the socket connected to the server
         - buffer: utility buffer to contain the message
         - mex_buffer: buffer to contain the message to send
         - username: username of the user that uses the client
@@ -420,7 +419,7 @@ EVP_PKEY* verify_server_cert( unsigned char* buffer, long buffer_size )
         - aad: buffer to allocate aad
         - session_key: buffer to contain the symmetric session key
 */
-void start_authenticated_conn(int socket_conn, unsigned char* buffer, unsigned char* mex_buffer, char* username, EVP_PKEY* user_key, unsigned char* aad, unsigned char* session_key)
+void start_authenticated_conn(unsigned char* buffer, unsigned char* mex_buffer, char* username, EVP_PKEY* user_key, unsigned char* aad, unsigned char* session_key)
 {
     int message_size;               // size of the message to send or received 
     int ret;
@@ -709,7 +708,7 @@ int main(int argc, char *argv[])
     cout << mex_after_server_conn;   
     
     // establish an authenticated and secure connection
-    start_authenticated_conn(sockfd, buffer, message, username, user_key, aad);
+    start_authenticated_conn(buffer, message, username, user_key, aad);
     
     cout << mex_ready_command;              // show to user that the command line is ready to take commands
     
