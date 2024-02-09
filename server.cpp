@@ -362,10 +362,10 @@ void users_init()
 void *client_handler(void* arguments) 
 {
     int ret;
-    Args *args = (Args*) arguments;            // take argument in args struct
-	int socket = args->socket;             // take socket associated with the client     
-	User u;
-	User* current_user = &u;               // user associeted with connected client
+    Args *args = (Args*) arguments;    // take argument in args struct
+	int socket = args->socket;         // take socket associated with the client     
+	User u;                            // create a new user struct that rapresent the current user for this thread    
+	User* current_user = &u;           // user associeted with connected client
 	
 	uint32_t networknumber;
 	unsigned int clientnumber;
@@ -510,6 +510,7 @@ void *client_handler(void* arguments)
 	signed_size = receive_msg(socket, buffer);     // receive sigend message -> format is -> ( sign_size | sign() | server nonce | ECDH client pubk )
 	unsigned int signature_size =*(unsigned int*)buffer;
 	signature_size += sizeof(unsigned int);
+	// -- check if the nonce received is correct or not
 	if(memcmp(buffer + signature_size, my_nonce, NONCE_SIZE) != 0)
 	{
     	cerr << "Error in the connection establishment: nonce received is not valid.\n";
@@ -568,10 +569,8 @@ void *client_handler(void* arguments)
 	args->session_key = session_key;       // set session key in args
 	
 	// set nonce counters, at the beginning are equal to 0
-	pthread_mutex_lock(&users_mutex);      // lock users_mutex
 	current_user->server_counter = 0;      // is the server nonce, is used for nonce in the messages sent by the server
 	current_user->client_counter = 0;      // is the client nonce, is used to verify the nonce in the messages sent by the client
-	pthread_mutex_unlock(&users_mutex);    // unlock users_mutex
 	
 	short cmd_code;                        // code of the command
 	unsigned int aad_len;                  // len of AAD
@@ -582,11 +581,53 @@ void *client_handler(void* arguments)
 	// send the list of the file in the dedicated stored of user
 	send_user_file_list(socket, current_user, session_key);
 	
+	unsigned int received_counter;         // variable to contain the received nonce from client
 	// main cicle
 	while(1)
 	{
     	// receive request from the client
     	msg_size = receive_msg(socket,buffer);
+    	
+    	received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received client nonce
+    	// check if the nonce is correct
+    	if(received_counter == current_user->client_counter)          // if is equal is correct otherwhise the message is not fresh
+    	{
+        	ret = decryptor(buffer, msg_size, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+        	inc_counter_nonce(client_counter);    // increment the client nonce
+    	
+    		if (ret >= 0)                         // check if correctly decrypted 
+    		{
+        		// switch to see the cmd_code received and to perform the necessary operations to execute it.
+        		switch(cmd_code)
+        		{
+        		case -1:   //
+            		{
+                		break
+            		}
+            	case 0:    // close connection request
+                	{
+                    	
+                    	break;
+                	}
+                case 1:    //
+                	{
+                    	break;
+                	}
+                case 2:    //
+                	{
+                    	break;
+                	}
+                default:    // cmd_code incorrect or unrecognised
+                    {
+                        // control print in the server
+                        // send error mex to the client
+                        break;
+                    }
+        		}
+    		}
+    	}
+    	else                       // nonce is not correct
+    		cerr << err_rec_nonce;         // print mex error
 	}
 }
 // ------------------------------- end: function to manage registered user -------------------------------

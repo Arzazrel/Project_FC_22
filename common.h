@@ -29,6 +29,8 @@
 
 using namespace std;
 
+string err_rec_nonce = "Received nonce is not fresh.\n";        // error that occurs when a received nonce is not correct
+
 // ------------------------------- start: parmaeter and utility variables for encrypt and digital sign -------------------------------
 const EVP_CIPHER* AE_cipher = EVP_aes_128_gcm();        // for ecnryption using AES with 128 bit 
 int AE_iv_len =  EVP_CIPHER_iv_length(AE_cipher);       // size of the IV for encryption and decryption
