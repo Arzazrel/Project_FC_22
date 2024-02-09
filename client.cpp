@@ -44,7 +44,7 @@ unsigned int server_counter = 0;       // is the server nonce, is used to verify
 unsigned int client_counter = 0;       // is the client nonce, is used for nonce in the messages sent by the client
 
 // matrix containing all the commands recognised by the client, sorted by their respective cmd_code.
-char commands[][ MAX_DIM_COMANDI ]={"!logout",
+char commands[][ MAX_DIM_COMMAND ]={"!logout",
                                     "!list",
                    					"!upload",
                    					"!download",
@@ -65,7 +65,7 @@ string CA_CRL_path = "ClientFiles/Certificates/FoC_Proj_CA_CRL.pem";        // p
 // ------------------------------- start: messages -------------------------------
 // message to be shown to the user after the first connection to the server but before authentication and the session is established.
 string mex_after_server_conn = "Server authentication in progress...\n"; 
-string mex_ready_command = "Please enter the command you want.\n";   // message to be displayed to notify the user that he/she can enter commands 
+string mex_ready_command = "Please enter the command you want.\n";              // message to be displayed to notify the user that he/she can enter commands 
 string aut_encr_conn_succ = "\nAuthenticated and encrypted connection with the server successfully established.\n";   // message that is displayed once the authenticated and encrypted connection with the server is successfully established
 // -- errors
 string err_open_file = "Error: cannot open file.\n";                            // error that occurs when a file cannot be opened
@@ -87,7 +87,7 @@ void print_command_legend()
 	cout << HELP_DELETE;
 	cout << HELP_LOGOUT;
 	cout << HELP_HELP;
-	cout << "-----------------------------------------------------------\n";
+	cout << "-----------------------------------------------------------\n\n";
 }
 // ------------------------------- end: general function -------------------------------
 
@@ -245,6 +245,9 @@ void send_list_request(char* username, unsigned char* session_key)
 	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
 	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
 	
+	free(message);     // free the buffer containing the cleartext message (user file list)
+	message = (unsigned char*)malloc(MAX_SIZE);
+	
 	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
 	{
 		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
@@ -275,8 +278,6 @@ void send_list_request(char* username, unsigned char* session_key)
 	free(aad);         // free aad 8in this case the server nonce	
 }
 // ------------------------------- end: functions to perform user commands -------------------------------
-
-
 
 // ------------------------------- start: functions to manage user entering of commands -------------------------------
 /*
@@ -348,6 +349,7 @@ void help(char* command)
             }
 	}
 }	
+
 /*
     Description:  
         function that reads the keyboard command, identifies it and performs the necessary operations to fulfil it if the command is recognised
@@ -369,7 +371,7 @@ void read_command(char* username, unsigned char* session_key)
     if (res == 0)  // error while reading or read zero bytes (i.e. pressed ctrl+d as first character)
 	{
         cerr << "stdin read error.\n";
-    	return NULL;                      // return to main loop to perform again the fgets 
+    	return;                      // return to main loop to perform again the fgets 
 	}
 	 
 	// take the command and the parameters and counts them
@@ -404,14 +406,14 @@ void read_command(char* username, unsigned char* session_key)
                	
                	if (num_string_readed == 3)
                	{
-                   	if ((strlen(parametro[0]) > MAX_DIM_PAR) || (strlen(parametro[1]) > MAX_DIM_PAR))     // other dimension check of the parameters
+                   	if ((strlen(parameters[0]) > MAX_DIM_PAR) || (strlen(parameters[1]) > MAX_DIM_PAR))     // other dimension check of the parameters
                    	{
                        	cerr << err_dim_par;        // print error mex
                    	}
                    	else
                    	{
-                       	sscanf(parametro[0], "%s", old_file_name);  // take old file name
-       					sscanf(parametro[1], "%s", new_file_name);  // take new file name
+                       	sscanf(parameters[0], "%s", old_file_name);  // take old file name
+       					sscanf(parameters[1], "%s", new_file_name);  // take new file name
        					// call function
                    	}
                	}
@@ -437,7 +439,6 @@ void read_command(char* username, unsigned char* session_key)
         default:
              {
                  cerr << err_command;       // print error mex
-                 return NULL;               // return to main loop to perform again the fgets 
              }
     }
 }
@@ -866,7 +867,7 @@ int main(int argc, char *argv[])
     cout << mex_after_server_conn;   
     
     // establish an authenticated and secure connection
-    start_authenticated_conn(buffer, message, username, user_key, aad);
+    start_authenticated_conn(buffer, message, username, user_key, aad, session_key);
     
     cout << mex_ready_command;              // show to user that the command line is ready to take commands
     

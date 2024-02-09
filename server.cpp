@@ -202,7 +202,7 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
     	memcpy(message + msg_len - 1, "\0", 1);       
     }
     
-    cout << "++++++ user_file_list message: " << message << "\n";      // +++++++++++++ test mode +++++++++++++
+    cout << "++++++ user_file_list message: " << message;      // +++++++++++++ test mode +++++++++++++
     
     // send message
     unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
@@ -223,7 +223,7 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
 		
 		inc_counter_nonce(current_user->server_counter);  // update server counter
 	}
-	cout << "\nUser file list sent to the user: " << current_user->username << ".\n";
+	cout << "User file list sent to the user: " << current_user->username << ".\n\n";
 	// free all
 	free(buffer);      // free buffer containing the encrypted message
 	free(message);     // free the buffer containing the cleartext message (user file list)
@@ -246,9 +246,10 @@ void handle_user_file_list_req(int socket, User* current_user, unsigned char* se
     unsigned int msg_len = 0;       // len of the message sent or received
     int ret;
     short cmd_code = 1;
+    char* rec_user = (char*)rec_username;
     
     // check the received username
-    if( (rec_username_size < USERNAME_SIZE) && (strcmp(rec_username, rec_username) == 0))     // received username equal to the username of current user
+    if( (rec_username_size < USERNAME_SIZE) && (strcmp(rec_user, current_user->username) == 0))     // received username equal to the username of current user
     {
         // all is ok, call the function to take and to send the list
         send_user_file_list(socket, current_user, session_key);
@@ -282,12 +283,33 @@ void handle_user_file_list_req(int socket, User* current_user, unsigned char* se
        		send_msg(socket, ret, buffer);                     // send user file list to client
        		inc_counter_nonce(current_user->server_counter);   // update server counter
        	}
+       	// free all
+        free(buffer);          // free buffer containing the encrypted message
+       	free(message);         // free the buffer containing the cleartext message (user file list)
+    	free(aad);             // free aad 8in this case the server nonce
     }
-    
-    // free all
-    free(buffer);          // free buffer containing the encrypted message
-	free(message);         // free the buffer containing the cleartext message (user file list)
-	free(aad);             // free aad 8in this case the server nonce
+}
+
+/*
+    Description:  
+        function that set offline an user
+    Parameters:
+        - username: username of the user to be checked
+*/
+void set_user_offline(char* username)
+{	
+	pthread_mutex_lock(&users_mutex);   // lock users mutex
+	
+	// scroll all the users list
+	for(list<User>::iterator it=users.begin(); it != users.end();it++)
+	{
+		if(strcmp(it->username, username) == 0)       // check if the current user is the searched user
+		{
+			it->online = false;                   // set user as online
+		}
+	}
+	
+	pthread_mutex_unlock(&users_mutex); // unlock users mutex
 }
 
 /*
@@ -306,9 +328,10 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
     unsigned int msg_len = 0;       // len of the message sent or received
     int ret;
     short cmd_code = 0;
+    char* rec_user = (char*)rec_username;
     
     // check the received username
-    if( (rec_username_size < USERNAME_SIZE) && (strcmp(rec_username, rec_username) == 0))     // received username equal to the username of current user
+    if( (rec_username_size < USERNAME_SIZE) && (strcmp(rec_user, current_user->username) == 0))     // received username equal to the username of current user
     {
         // set ok message
         msg_len = strlen(mex_close_conn_succ.c_str()) + 1;			// update msg_len
@@ -350,7 +373,7 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
 	}
     
     // set user as offline in the users list
-    set_user_offline(current_user->username)
+    set_user_offline(current_user->username);
     
     cout << "The thread that serves the user: " << current_user->username << " has completed its task, connection closed.\n";
     // free all
@@ -362,7 +385,7 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
 	// close connection
 	close(socket);         // close the socket
 	pthread_exit(NULL);    // terminate the thread
-	return NULL;
+	return;
 }
 // ------------------------------- end: functions to perform the operations required by the client -------------------------------
 
@@ -404,28 +427,6 @@ bool check_user_signed(string username, User* c_user)
 	
 	cerr << "User not found among registered users.\n";
 	return false;
-}
-
-/*
-    Description:  
-        function that set offline an user
-    Parameters:
-        - username: username of the user to be checked
-*/
-void set_user_offline(char* username)
-{	
-	pthread_mutex_lock(&users_mutex);   // lock users mutex
-	
-	// scroll all the users list
-	for(list<User>::iterator it=users.begin(); it != users.end();it++)
-	{
-		if(strcmp(it->username, username) == 0)       // check if the current user is the searched user
-		{
-			it->online = false;                   // set user as online
-		}
-	}
-	
-	pthread_mutex_unlock(&users_mutex); // unlock users mutex
 }
 
 /*
@@ -744,8 +745,8 @@ void *client_handler(void* arguments)
     	if(received_counter == current_user->client_counter)          // if is equal is correct otherwhise the message is not fresh
     	{
         	ret = decryptor(buffer, msg_size, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
-        	inc_counter_nonce(client_counter);    // increment the client nonce
-    	
+        	inc_counter_nonce(current_user->client_counter);      // increment the client nonce		
+
     		if (ret >= 0)                         // check if correctly decrypted 
     		{
         		// switch to see the cmd_code received and to perform the necessary operations to execute it.
@@ -765,7 +766,19 @@ void *client_handler(void* arguments)
                     	handle_user_file_list_req(socket, current_user, session_key, message, ret); // handle user file list request
                     	break;
                 	}
-                case 2:    //
+                case 2:    // upload request
+                	{
+                    	break;
+                	}
+                case 3:    // download request
+                	{
+                    	break;
+                	}
+                case 4:    // rename request
+                	{
+                    	break;
+                	}
+                case 5:    // delate request
                 	{
                     	break;
                 	}
@@ -779,7 +792,9 @@ void *client_handler(void* arguments)
     		}
     	}
     	else                       // nonce is not correct
+    	{
     		cerr << err_rec_nonce;         // print mex error
+    	}
 	}
 }
 // ------------------------------- end: function to manage registered user -------------------------------
