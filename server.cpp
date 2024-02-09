@@ -52,6 +52,7 @@ string mex_AE_conn_succ = "Successful authenticated and protected connection bet
 string mex_close_conn_succ = "Successfully closed the secure and authenticated connection with the server.\n";  // message of successfully closed the secure and authenticated connection
 // Error message when verifying the username when closing the connection
 string mex_close_conn_err =  "ERROR: The username sent in the closing request does not match the user served. The connection will be closed..\n";
+string mex_user_file_list_err = "ERROR: The username sent in the file list request does not match the user served.\n"; // Error message when verifying the username when retrieve the user file list
 
 // semaphores
 pthread_mutex_t users_mutex;            // semaphore for list<User> users
@@ -145,7 +146,7 @@ void semaphores_destroy()
         - current_user: reference to the user
         - session_key: the symmetric session key between the client and the server
 */
-void send_user_file_list(int socket,  User* current_user, unsigned char* session_key)
+void send_user_file_list(int socket, User* current_user, unsigned char* session_key)
 {
     // read the name of dedicated stored folder 
     struct dirent **folder_list;
@@ -208,9 +209,7 @@ void send_user_file_list(int socket,  User* current_user, unsigned char* session
 	if(!aad)
     	error("Error in user_file_list: aad Malloc error.\n");
     
-    pthread_mutex_lock(&users_mutex);          // lock for users list
     memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
-    pthread_mutex_unlock(&users_mutex);        // unlock for users list
 	
 	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
 	if(!buffer)
@@ -222,15 +221,73 @@ void send_user_file_list(int socket,  User* current_user, unsigned char* session
 	{
 		send_msg(socket, ret, buffer);            // send user file list to client
 		
-		pthread_mutex_lock(&users_mutex);                 // lock for users list
 		inc_counter_nonce(current_user->server_counter);  // update server counter
-		pthread_mutex_unlock(&users_mutex);               // unlock for users list
 	}
 	cout << "\nUser file list sent to the user: " << current_user->username << ".\n";
 	// free all
 	free(buffer);      // free buffer containing the encrypted message
 	free(message);     // free the buffer containing the cleartext message (user file list)
 	free(aad);         // free aad 8in this case the server nonce
+}
+
+/*
+    Description:  
+        function that handle the user's request to see the list of files in its dedicated storage (folder)
+    Parameters:
+        - socket: client socket to send the list
+        - current_user: reference to the user
+        - session_key: the symmetric session key between the client and the server
+        - rec_username: the received username
+        - rec_username_size: the size of the received username
+*/
+void handle_user_file_list_req(int socket, User* current_user, unsigned char* session_key, unsigned char* rec_username, unsigned int rec_username_size)
+{
+    unsigned char* message;         // contain the message to be sent
+    unsigned int msg_len = 0;       // len of the message sent or received
+    int ret;
+    short cmd_code = 1;
+    
+    // check the received username
+    if( (rec_username_size < USERNAME_SIZE) && (strcmp(rec_username, rec_username) == 0))     // received username equal to the username of current user
+    {
+        // all is ok, call the function to take and to send the list
+        send_user_file_list(socket, current_user, session_key);
+    } 
+    else            // received username is not equal to the username of current user
+    {
+        // set error message
+        cmd_code = -1;
+        msg_len = strlen(mex_user_file_list_err.c_str()) + 1;			// update msg_len
+       	message = (unsigned char*)malloc(msg_len);
+       	if(!message)
+           	error("Error in close_user_conn: message Malloc error.\n");
+       	memcpy(message, mex_user_file_list_err.c_str(), msg_len);        // copy in message
+       	
+       	// set aad
+        unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
+       	if(!aad)
+            error("Error in user_file_list: aad Malloc error.\n");
+        memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
+       	
+       	// set buffer
+       	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+       	if(!buffer)
+           	error("Error in user_file_list: buffer Malloc error.\n");
+           
+        // encrypt message
+        ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+       	if (ret >= 0)      // successfully encrypted
+       	{
+           	// send error message
+       		send_msg(socket, ret, buffer);                     // send user file list to client
+       		inc_counter_nonce(current_user->server_counter);   // update server counter
+       	}
+    }
+    
+    // free all
+    free(buffer);          // free buffer containing the encrypted message
+	free(message);         // free the buffer containing the cleartext message (user file list)
+	free(aad);             // free aad 8in this case the server nonce
 }
 
 /*
@@ -258,7 +315,7 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
        	message = (unsigned char*)malloc(msg_len);
        	if(!message)
            	error("Error in close_user_conn: message Malloc error.\n");
-       	memcpy(message, temp, msg_len);        // copy in message
+       	memcpy(message, mex_close_conn_succ.c_str(), msg_len);        // copy in message
     } 
     else            // received username is not equal to the username of current user
     {
@@ -268,7 +325,7 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
        	message = (unsigned char*)malloc(msg_len);
        	if(!message)
            	error("Error in close_user_conn: message Malloc error.\n");
-       	memcpy(message, temp, msg_len);        // copy in message
+       	memcpy(message, mex_close_conn_err.c_str(), msg_len);        // copy in message
     }
     
     // set aad
@@ -703,8 +760,9 @@ void *client_handler(void* arguments)
                     	close_user_conn(socket, current_user, session_key, message, ret);     // close the user connection
                     	break;
                 	}
-                case 1:    //
+                case 1:    // user file list request
                 	{
+                    	handle_user_file_list_req(socket, current_user, session_key, message, ret); // handle user file list request
                     	break;
                 	}
                 case 2:    //

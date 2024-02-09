@@ -142,21 +142,21 @@ void send_close_conn_request(char* username, unsigned char* session_key)
 	// -- set aad (client nonce)
 	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
 	if(!aad)
-    	error("Error in user_file_list: aad Malloc error.\n");
+    	error("Error in send_close_conn_request: aad Malloc error.\n");
 	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
 	
 	// -- buffer 
 	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
 	if(!buffer)
-    	error("Error in user_file_list: buffer Malloc error.\n");
+    	error("Error in send_close_conn_request: buffer Malloc error.\n");
 	
 	// -- encrypt the message, cmd_code for the operation to close connection is 0
 	ret = encryptor(0,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
 	if (ret >= 0)      // successfully encrypted
 	{
     	// send the close connection request to the server
-		send_msg(socket, ret, buffer);        // send user file list to client
-		inc_counter_nonce(client_counter);    // update server counter
+		send_msg(socket_server, ret, buffer);     // send user file list to client
+		inc_counter_nonce(client_counter);        // update client counter
 	}
 	
 	// wait the response of the server, format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
@@ -194,6 +194,85 @@ void send_close_conn_request(char* username, unsigned char* session_key)
 	free(aad);         // free aad 8in this case the server nonce	
 	
 	quit_program();    // close connection and program
+}
+
+/*
+    Description:  
+        function to send the request to close the connection with the server
+    Parameters:
+        - username: username of the user that uses the client
+        - session_key: buffer to contain the symmetric session key	
+*/
+void send_list_request(char* username, unsigned char* session_key)
+{
+    unsigned char* message;        // contain the message to be sent
+    unsigned int msg_len = 0;      // the len of the message to encrypt
+    short cmd_code = 1;            // code of the command
+	unsigned int aad_len;          // len of AAD
+    int ret;
+
+	cout << "Send request for the list of the user's file on the server...\n";
+	
+	// set packet to send, the packet format is -> ( 1 | tag | IV | aad_len | client_nonce | username )
+	// -- set the message to ecnrypt
+	msg_len = strlen(username) + 1;			       // update msg_len
+	message = (unsigned char*)malloc(msg_len);     // allocate       
+	if(!message)
+      	error("Error in send_list_request: message Malloc error.\n");
+	memcpy(message, username, msg_len);            // copy in message
+	
+	// -- set aad (client nonce)
+	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
+	if(!aad)
+    	error("Error in send_list_request: aad Malloc error.\n");
+	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
+	
+	// -- buffer 
+	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+	if(!buffer)
+    	error("Error in send_list_request: buffer Malloc error.\n");
+    	
+    // -- encrypt the message, cmd_code for the list operation is 1
+	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+	if (ret >= 0)      // successfully encrypted
+	{
+    	// send the close connection request to the server
+		send_msg(socket_server, ret, buffer);     // send user file list to client
+		inc_counter_nonce(client_counter);        // update client counter
+	}
+	
+	// wait the response of the server, format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
+	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
+	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+	
+	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+	{
+		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+		inc_counter_nonce(server_counter);    // increment the server nonce
+		
+		if (ret >= 0)                         // correctly decrypted 
+		{
+    		// check the cmd_code received
+    		if ((cmd_code != -1) && (cmd_code == 1))  // all is ok
+    		{
+        		print_files_list(message, ret);       // print the list of the user file stored in the server
+    		}
+    		else if (cmd_code == -1)                  // error message
+    		{
+    			memcpy(message + ret - 1, "\0", 1);   // for secure
+            	cerr << message;                      // print the error message
+    		}
+    		else
+        		cerr << err_rec_cmd_code;             // error message
+		}
+	}
+	else
+		cerr << "Received nonce is not fresh.\n";
+	
+	// free all
+	free(buffer);      // free buffer containing the encrypted message
+	free(message);     // free the buffer containing the cleartext message (user file list)
+	free(aad);         // free aad 8in this case the server nonce	
 }
 // ------------------------------- end: functions to perform user commands -------------------------------
 
@@ -308,7 +387,7 @@ void read_command(char* username, unsigned char* session_key)
              }
         case 1:    // list -> no parameters
              {
-                 
+                 send_list_request(username, session_key);          // send message to request the user file list on the server
                  break;
              }
         case 2:    // upload -> 1 parameter
