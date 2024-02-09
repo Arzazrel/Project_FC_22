@@ -107,17 +107,93 @@ void print_files_list(unsigned char* buffer, unsigned int buffer_size)
 	cout << buffer << "\n";                       // print the list of file
 }
 
+//    Description:  function to close connection and quite the program
+void quit_program()
+{
+    close(socket_server);  // close socket
+    exit(0);               // close program
+}
+
 /*
     Description:  
         function to send the request to close the connection with the server
     Parameters:
-        - buffer: buffer conatining the list of the file stored on the server
-        - buffer_size: the size of the buffer 
+        - username: username of the user that uses the client
+        - session_key: buffer to contain the symmetric session key	
 */
-void send_close_conn_request(unsigned char* buffer, unsigned int buffer_size)
+void send_close_conn_request(char* username, unsigned char* session_key)
 {
+    unsigned char* message;        // contain the message to be sent
+    unsigned int msg_len = 0;      // the len of the message to encrypt
+    short cmd_code;                // code of the command
+	unsigned int aad_len;          // len of AAD
+    int ret;
+
 	cout << "Send request to close the server connection...\n";
 	
+	// set packet to send, the packet format is -> ( 0 | tag | IV | aad_len | client_nonce | username )
+	// -- set the message to ecnrypt
+	msg_len = strlen(username) + 1;			       // update msg_len
+	message = (unsigned char*)malloc(msg_len);     // allocate       
+	if(!message)
+      	error("Error in send_close_conn_request: message Malloc error.\n");
+	memcpy(message, username, msg_len);            // copy in message
+	
+	// -- set aad (client nonce)
+	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
+	if(!aad)
+    	error("Error in user_file_list: aad Malloc error.\n");
+	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
+	
+	// -- buffer 
+	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+	if(!buffer)
+    	error("Error in user_file_list: buffer Malloc error.\n");
+	
+	// -- encrypt the message, cmd_code for the operation to close connection is 0
+	ret = encryptor(0,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+	if (ret >= 0)      // successfully encrypted
+	{
+    	// send the close connection request to the server
+		send_msg(socket, ret, buffer);        // send user file list to client
+		inc_counter_nonce(client_counter);    // update server counter
+	}
+	
+	// wait the response of the server, format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
+	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
+	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+	
+	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+	{
+		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+		inc_counter_nonce(server_counter);    // increment the server nonce
+		
+		if (ret >= 0)                         // correctly decrypted 
+		{
+    		// check the cmd_code received
+    		if ((cmd_code != -1) && (cmd_code == 0))  // all is ok
+    		{
+        		memcpy(message + ret - 1, "\0", 1);   // for secure
+            	cout << message;                      // print the error message
+    		}
+    		else if (cmd_code == -1)                  // error message
+    		{
+    			memcpy(message + ret - 1, "\0", 1);   // for secure
+            	cerr << message;                      // print the error message
+    		}
+    		else
+        		cerr << err_rec_cmd_code;             // error message
+		}
+	}
+	else
+		cerr << "Received nonce is not fresh.\n";
+	
+	// free all
+	free(buffer);      // free buffer containing the encrypted message
+	free(message);     // free the buffer containing the cleartext message (user file list)
+	free(aad);         // free aad 8in this case the server nonce	
+	
+	quit_program();    // close connection and program
 }
 // ------------------------------- end: functions to perform user commands -------------------------------
 
@@ -193,9 +269,14 @@ void help(char* command)
             }
 	}
 }	
-
-//    Description:  function that reads the keyboard command, identifies it and performs the necessary operations to fulfil it if the command is recognised
-void read_command()				
+/*
+    Description:  
+        function that reads the keyboard command, identifies it and performs the necessary operations to fulfil it if the command is recognised
+    Parameters:
+        - username: username of the user that uses the client
+        - session_key: buffer to contain the symmetric session key
+*/
+void read_command(char* username, unsigned char* session_key)				
 {
     int command_code = 0;
     char buf [ MAX_DIM_COMMAND + (MAX_DIM_PAR * MAX_NUM_PAR) ];    // buffer to contain the line inserted by user
@@ -222,9 +303,7 @@ void read_command()
     {
         case 0:    // exit/logout -> no parameters
              {
-                 // send message to close the connection
-                 close(socket_server);  // close socket
-                 exit(0);               // close program
+                 send_close_conn_request(username, session_key);    // send message to close the connection
                  break;
              }
         case 1:    // list -> no parameters
@@ -716,7 +795,7 @@ int main(int argc, char *argv[])
     // main while, 
     while(1)
     {
-        read_command();         // take the command
+        read_command(username, session_key);         // take the command
     }
 }
 

@@ -49,6 +49,9 @@ struct Args
 
 string mex_serv_listening = "Cloud server operative, waiting for client connection...\n";   // message to be shown after socket settings
 string mex_AE_conn_succ = "Successful authenticated and protected connection between client and server.\n";     // message of successful authenticated and protected connection between client and server
+string mex_close_conn_succ = "Successfully closed the secure and authenticated connection with the server.\n";  // message of successfully closed the secure and authenticated connection
+// Error message when verifying the username when closing the connection
+string mex_close_conn_err =  "ERROR: The username sent in the closing request does not match the user served. The connection will be closed..\n";
 
 // semaphores
 pthread_mutex_t users_mutex;            // semaphore for list<User> users
@@ -139,7 +142,6 @@ void semaphores_destroy()
         of the user passed as parameter(cmd_code = 1).
     Parameters:
         - socket: client socket to send the list
-
         - current_user: reference to the user
         - session_key: the symmetric session key between the client and the server
 */
@@ -151,9 +153,7 @@ void send_user_file_list(int socket,  User* current_user, unsigned char* session
     unsigned char* message;         // contain the message to be sent
     int ret;
     
-    pthread_mutex_lock(&users_mutex);          // lock for users list
     string path = ded_store_path + "/" + current_user->username;  // path of the folder to be scanned
-    pthread_mutex_unlock(&users_mutex);        // unlock for users list
     
     unsigned int msg_len = 0;
     int n;              // number of different folder (user), plus 2
@@ -233,6 +233,80 @@ void send_user_file_list(int socket,  User* current_user, unsigned char* session
 	free(aad);         // free aad 8in this case the server nonce
 }
 
+/*
+    Description:  
+        function that close the connection with an user
+    Parameters:
+        - socket: client socket to send the list
+        - current_user: reference to the user
+        - session_key: the symmetric session key between the client and the server
+        - rec_username: the received username
+        - rec_username_size: the size of the received username
+*/
+void close_user_conn(int socket, User* current_user, unsigned char* session_key, unsigned char* rec_username, unsigned int rec_username_size)
+{
+    unsigned char* message;         // contain the message to be sent
+    unsigned int msg_len = 0;       // len of the message sent or received
+    int ret;
+    short cmd_code = 0;
+    
+    // check the received username
+    if( (rec_username_size < USERNAME_SIZE) && (strcmp(rec_username, rec_username) == 0))     // received username equal to the username of current user
+    {
+        // set ok message
+        msg_len = strlen(mex_close_conn_succ.c_str()) + 1;			// update msg_len
+       	message = (unsigned char*)malloc(msg_len);
+       	if(!message)
+           	error("Error in close_user_conn: message Malloc error.\n");
+       	memcpy(message, temp, msg_len);        // copy in message
+    } 
+    else            // received username is not equal to the username of current user
+    {
+        // set error message
+        cmd_code = -1;
+        msg_len = strlen(mex_close_conn_err.c_str()) + 1;			// update msg_len
+       	message = (unsigned char*)malloc(msg_len);
+       	if(!message)
+           	error("Error in close_user_conn: message Malloc error.\n");
+       	memcpy(message, temp, msg_len);        // copy in message
+    }
+    
+    // set aad
+    unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
+	if(!aad)
+    	error("Error in user_file_list: aad Malloc error.\n");
+    memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
+	
+	// set buffer
+	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+	if(!buffer)
+    	error("Error in user_file_list: buffer Malloc error.\n");
+    
+    // encrypt message
+    ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+	if (ret >= 0)      // successfully encrypted
+	{
+    	// send message
+		send_msg(socket, ret, buffer);            // send user file list to client
+		// there is no need to increment the server_counter. the connection is being closed, 
+		// no further messages will be sent for this session.
+	}
+    
+    // set user as offline in the users list
+    set_user_offline(current_user->username)
+    
+    cout << "The thread that serves the user: " << current_user->username << " has completed its task, connection closed.\n";
+    // free all
+    free(session_key);     // free the session key	
+    free(buffer);          // free buffer containing the encrypted message
+	free(message);         // free the buffer containing the cleartext message (user file list)
+	free(aad);             // free aad 8in this case the server nonce
+	
+	// close connection
+	close(socket);         // close the socket
+	pthread_exit(NULL);    // terminate the thread
+	return NULL;
+}
 // ------------------------------- end: functions to perform the operations required by the client -------------------------------
 
 // ------------------------------- start: function to manage registered user -------------------------------
@@ -263,7 +337,8 @@ bool check_user_signed(string username, User* c_user)
 			c_user->client_counter = it->client_counter;
 			c_user->online = it->online;
 			cout << "User " << c_user->username << " found among registered users.\n";
-			pthread_mutex_unlock(&users_mutex); // unlock users mutex
+			it->online = true;                   // set user as online
+			pthread_mutex_unlock(&users_mutex);  // unlock users mutex
 			return true;	// return the user	
 		}
 	}
@@ -272,6 +347,28 @@ bool check_user_signed(string username, User* c_user)
 	
 	cerr << "User not found among registered users.\n";
 	return false;
+}
+
+/*
+    Description:  
+        function that set offline an user
+    Parameters:
+        - username: username of the user to be checked
+*/
+void set_user_offline(char* username)
+{	
+	pthread_mutex_lock(&users_mutex);   // lock users mutex
+	
+	// scroll all the users list
+	for(list<User>::iterator it=users.begin(); it != users.end();it++)
+	{
+		if(strcmp(it->username, username) == 0)       // check if the current user is the searched user
+		{
+			it->online = false;                   // set user as online
+		}
+	}
+	
+	pthread_mutex_unlock(&users_mutex); // unlock users mutex
 }
 
 /*
@@ -407,10 +504,7 @@ void *client_handler(void* arguments)
     if (check_user_signed(username, current_user) == false)
         error("Error in the connection establishment: unregistered user.\n");
         
-    
-    pthread_mutex_lock(&users_mutex);              // lock users_mutex
     bool temp_curr_user_online = current_user->online;
-    pthread_mutex_unlock(&users_mutex);            // unlock users_mutex
     
     // user is already online (connected to the server) no more connections will be accepted at the same time for the same user
     if (temp_curr_user_online)          
@@ -602,11 +696,11 @@ void *client_handler(void* arguments)
         		{
         		case -1:   //
             		{
-                		break
+                		break;
             		}
             	case 0:    // close connection request
                 	{
-                    	
+                    	close_user_conn(socket, current_user, session_key, message, ret);     // close the user connection
                     	break;
                 	}
                 case 1:    //
@@ -640,7 +734,7 @@ int main(int argc, char *argv[])
 	int ret, sock, server_port;
 	socklen_t clilen;
 	struct sockaddr_in addr_server, cli_addr;
-	list<pthread_t> thread_list;                // list of the created thread, one thread for each served user
+	//list<pthread_t> thread_list;                // list of the created thread, one thread for each served user
 
     // check that the correct number of parameters have been passed
     if (argc != 2)		
@@ -709,11 +803,12 @@ int main(int argc, char *argv[])
                 // create new thread
                 pthread_t thread;
                 pthread_mutex_lock(&thread_list_mutex);          // lock for thread list
-                thread_list.push_back(thread);
+                //thread_list.push_back(thread);
         		pthread_mutex_unlock(&thread_list_mutex);        // unlock for thread list
             
         		// manage the client with the new thread
-        		if(pthread_create(&thread_list.back(), NULL, &client_handler, (void *)args)  != 0 )
+        		//if(pthread_create(&thread_list.back(), NULL, &client_handler, (void *)args)  != 0 )
+        		if(pthread_create(&thread, NULL, &client_handler, (void *)args)  != 0 )
             		cerr << "Failed to create thread\n";
     	    }
     	}

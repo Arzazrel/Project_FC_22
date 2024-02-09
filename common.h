@@ -30,6 +30,7 @@
 using namespace std;
 
 string err_rec_nonce = "Received nonce is not fresh.\n";        // error that occurs when a received nonce is not correct
+string err_rec_cmd_code = "Received cmd_code is uncorrect.\n";  // error that occurs when a received cmd_code does not correspond to the one sent
 
 // ------------------------------- start: parmaeter and utility variables for encrypt and digital sign -------------------------------
 const EVP_CIPHER* AE_cipher = EVP_aes_128_gcm();        // for ecnryption using AES with 128 bit 
