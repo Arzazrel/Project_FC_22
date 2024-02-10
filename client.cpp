@@ -72,6 +72,9 @@ string err_open_file = "Error: cannot open file.\n";                            
 string err_command = "Error: command entered incorrect, please try again.\n";   // error that occurs when an entered command is incorrect
 string err_wrong_num_par = "Error in the number of parameters passed.\n";       // error that occurs when the number of parameter is incorrect
 string err_dim_par = "Error in the dimension of parameters passed.\n";          // error that occurs when the dimension of parameter is too big
+string err_rec_nonce = "Received nonce is not fresh.\n";                        // error that occurs when the received nonce is not correct
+
+string rename_failed = "Error: rename operation failed.\n";                     // error that occurs when the rename operation failed
 
 // ------------------------------- end: messages -------------------------------
 
@@ -186,7 +189,7 @@ void send_close_conn_request(char* username, unsigned char* session_key)
 		}
 	}
 	else
-		cerr << "Received nonce is not fresh.\n";
+		cerr << err_rec_nonce;
 	
 	// free all
 	free(buffer);      // free buffer containing the encrypted message
@@ -212,8 +215,8 @@ void send_list_request(char* username, unsigned char* session_key)
     int ret;
 
 	cout << "Send request for the list of the user's file on the server...\n";
-	
-	// set packet to send, the packet format is -> ( 1 | tag | IV | aad_len | client_nonce | username )
+
+	// 1) create and send packet to send, the packet format is -> ( 1 | tag | IV | aad_len | client_nonce | username )
 	// -- set the message to ecnrypt
 	msg_len = strlen(username) + 1;			       // update msg_len
 	message = (unsigned char*)malloc(msg_len);     // allocate       
@@ -236,7 +239,7 @@ void send_list_request(char* username, unsigned char* session_key)
 	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
 	if (ret >= 0)      // successfully encrypted
 	{
-    	// send the close connection request to the server
+    	// send the list request to the server
 		send_msg(socket_server, ret, buffer);     // send user file list to client
 		inc_counter_nonce(client_counter);        // update client counter
 	}
@@ -248,6 +251,7 @@ void send_list_request(char* username, unsigned char* session_key)
 	free(message);     // free the buffer containing the cleartext message (user file list)
 	message = (unsigned char*)malloc(MAX_SIZE);
 	
+	// 2) receive the response of the server
 	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
 	{
 		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
@@ -270,12 +274,119 @@ void send_list_request(char* username, unsigned char* session_key)
 		}
 	}
 	else
-		cerr << "Received nonce is not fresh.\n";
+		cerr << err_rec_nonce;
 	
 	// free all
 	free(buffer);      // free buffer containing the encrypted message
 	free(message);     // free the buffer containing the cleartext message (user file list)
 	free(aad);         // free aad 8in this case the server nonce	
+}
+
+/*
+    Description:  
+        function to send the request to close the connection with the server
+    Parameters:
+        - username: username of the user that uses the client
+        - session_key: buffer to contain the symmetric session key
+        - old_file_name: file name to be changed
+        - new_file_name: new file name
+*/
+void send_rename_request(char* username, unsigned char* session_key, char* old_file_name, char* new_file_name)
+{
+    unsigned char* message;         // contain the message to be sent
+    unsigned int msg_len = 0;       // the len of the message to encrypt
+    short cmd_code = 4;             // code of the command
+	unsigned int aad_len;           // len of AAD
+    int ret;
+    
+    // check the dimension fo a string
+    if ((strlen(old_file_name) > MAX_DIM_PAR) || (strlen(new_file_name) > MAX_DIM_PAR) )
+    {
+        cerr << "File name too big.\n";
+        return;     
+    }
+    
+    string old_s = old_file_name;   // string to contain the old file name
+    string new_s = new_file_name;   // string to contain the new file name
+    
+    // checking the correctness of strings
+    if ( check_file_name(old_s) && check_file_name(new_file_name))
+    {
+        // strings are correct
+        
+        // 1) create and send the request to the server -> format is -> ( cmd_code | tag | IV | aad_len | aad (nonce, old_n_len, new_n_len) | ciphertext (old_file_name, new_file_name) )
+    
+        // -- take string len
+        unsigned int old_n_len = strlen(old_file_name) + 1;     // take old file name len
+        unsigned int new_n_len = strlen(new_file_name) + 1;     // take new file name len
+        
+        // -- set the message to ecnrypt
+    	msg_len = old_n_len + new_n_len;			            // update msg_len
+    	message = (unsigned char*)malloc(msg_len);              // allocate       
+    	if(!message)
+          	error("Error in send_rename_request: message Malloc error.\n");
+    	memcpy(message, old_file_name, old_n_len);              // copy old_file_name in message
+    	memcpy(message + old_n_len, new_file_name, new_n_len);  // copy new_file_name in message
+        
+        // -- set aad (nonce, old_n_len, new_n_len)
+    	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int) + sizeof(unsigned int) + sizeof(unsigned int));  
+    	if(!aad)
+        	error("Error in send_rename_request: aad Malloc error.\n");
+    	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));  // copy client nonce in aad
+    	memcpy(aad + sizeof(unsigned int),(unsigned char*)&old_n_len,sizeof(unsigned int));  // copy old file name len
+    	memcpy(aad + sizeof(unsigned int),(unsigned char*)&new_n_len,sizeof(unsigned int));  // copy new file name len
+    	
+    	// -- buffer 
+    	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+    	if(!buffer)
+        	error("Error in send_rename_request: buffer Malloc error.\n");
+        
+        // -- encrypt the message, cmd_code for the rename operation is 4
+    	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len, session_key, buffer);
+    	if (ret >= 0)      // successfully encrypted
+    	{
+        	// send the rename request to the server
+    		send_msg(socket_server, ret, buffer);     // send user file list to client
+    		inc_counter_nonce(client_counter);        // update client counter
+    	}
+        
+        // free message and reallocate with a different dimension
+        free(message);     // free the buffer containing the cleartext message (user file list)
+    	message = (unsigned char*)malloc(MAX_SIZE);
+    	
+    	// 2) receive the response of the server
+    	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+    	{
+    		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+    		inc_counter_nonce(server_counter);    // increment the server nonce
+    		
+    		if (ret >= 0)                         // correctly decrypted 
+    		{
+        		// check the cmd_code received
+        		if ((cmd_code != -1) && (cmd_code == 4))  // all is ok
+        		{
+            		memcpy(message + ret - 1, "\0", 1);   // for secure
+                	cout << message;                      // print the message
+        		}
+        		else if (cmd_code == -1)                  // error message
+        		{
+        			memcpy(message + ret - 1, "\0", 1);   // for secure
+                	cerr << message;                      // print the error message
+        		}
+        		else
+            		cerr << err_rec_cmd_code;             // error message
+    		}
+    	}
+    	else
+    		cerr << err_rec_nonce;
+    	
+    	// free all
+    	free(buffer);      // free buffer containing the encrypted message
+    	free(message);     // free the buffer containing the cleartext message (user file list)
+    	free(aad);         // free aad 8in this case the server nonce	
+    }
+    else
+        cerr << rename_failed;
 }
 // ------------------------------- end: functions to perform user commands -------------------------------
 
@@ -414,7 +525,8 @@ void read_command(char* username, unsigned char* session_key)
                    	{
                        	sscanf(parameters[0], "%s", old_file_name);  // take old file name
        					sscanf(parameters[1], "%s", new_file_name);  // take new file name
-       					// call function
+       					
+       					send_rename_request(username, session_key, old_file_name, new_file_name);// checking the correctness of strings
                    	}
                	}
                	else
@@ -744,7 +856,7 @@ void start_authenticated_conn(unsigned char* buffer, unsigned char* mex_buffer, 
 		}
 	}
 	else
-		cerr << "Received nonce is not fresh.\n";
+		cerr << err_rec_nonce;
 	
 }
 // ------------------------------- end: connection function -------------------------------

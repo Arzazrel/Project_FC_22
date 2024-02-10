@@ -19,12 +19,14 @@
 #define USERNAME_SIZE 20            // maximum length for users' usernames
 #define MAX_CLIENTS 20              // maximum number of clients connected to the server at the same time
 #define MAX_FILE_SIZE 4294967296    // maximum size of files that can be saved and received by the cloud server 4Gbi = 2^32 Bytes
+#define MAX_DIM_FILE_NAME 100       // maximum length for a file_names, a size of 100 each is more than sufficient for most legitimate cases.
 // -- define for messages format -- GCM mex format is -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
 // Messages exchanged normally do not contain large files but keys, certificates, signatures or text (they do not need large buffers to be handled)
 #define MAX_SIZE 102400             // the maximum length for normal message (100 KBi)
 #define MSG_MAX 10000
 #define NONCE_SIZE 4                // size of the nonce
-#define MSG_AAD_OFFSET 34           // offset of the AAD(usually only nonce) in the message format (AAD is after cmd_code,tag,IV,nonce_len)
+#define MSG_AAD_OFFSET 34           // offset of the AAD(usually only nonce) in the message format (AAD is after cmd_code,tag,IV,aad_len)
+#define MSG_AAD_LEN_OFFSET 30       // offset of the AAD_len in the message format (AAD_len is after cmd_code,tag,IV)
 
 static char ok_chars[] = "abcdefghijklmnopqrstuvwxyz"
                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -101,6 +103,10 @@ bool check_file_name(const string& str)
     // -- check that path is an allowed path, the files in the client must be in 
     cout << "The canon string is: " << canon_str << "\n";
     /*
+    // controllare prima che la prima parte sia da home
+    // prendere lunghezza della stringa iniziale e poi di quella canonicalizzata, la differenza delle dimensioni sarà
+    // quanto occupa la parte prima del nome del file. controllare che la parte prima corrisponda a /ClientFiles/username
+    
     // check that directory is "/home" (in some systems this should be: "/home/<username>")
     if(strncmp(canon_str2, "/home/", strlen("/home/")) != 0) 
     { 

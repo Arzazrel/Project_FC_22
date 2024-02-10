@@ -283,6 +283,143 @@ void handle_user_file_list_req(int socket, User* current_user, unsigned char* se
 
 /*
     Description:  
+        function that handle the user's request to see the list of files in its dedicated storage (folder)
+    Parameters:
+        - socket: client socket to send the list
+        - current_user: reference to the user
+        - session_key: the symmetric session key between the client and the server
+        - buffer: buffer that contain all the received message
+        - cleartext: the received username
+        - cleartext_size: the size of the received username
+*/
+void handle_rename_req(int socket, User* current_user, unsigned char* session_key, unsigned char* buffer ,unsigned char* cleartext, unsigned int cleartext_size)
+{
+    unsigned char* message;         // contain the message to be sent
+    unsigned int msg_len = 0;       // len of the message sent or received
+    int ret;
+    short cmd_code = 4;
+    
+    // check the received cleartext. cleartext is composed of the old and the new name
+    if( cleartext_size > (2 * MAX_DIM_FILE_NAME) )     
+    {
+        // set error mex
+        cmd_code = -1;
+        char temp[] = "The file names are too bigs.\n";
+        msg_len = strlen(temp) + 1;       // update msg_len
+       	message = (unsigned char*)malloc(msg_len);
+       	if(!message)
+           	error("Error in handle_rename_req: message Malloc error.\n");
+       	memcpy(message, temp, msg_len);         // copy in message
+    }
+    else
+    {
+        // take file names size
+        unsigned int old_n_len;     // take old file name len
+        unsigned int new_n_len;     // take new file name len
+        
+        old_n_len =*(unsigned int*)(buffer + MSG_AAD_OFFSET + sizeof(unsigned int));   //take the received client nonce
+        new_n_len =*(unsigned int*)(buffer + MSG_AAD_OFFSET + sizeof(unsigned int) + sizeof(unsigned int));   //take the received client nonce
+        
+        char* old_file_name = (unsigned char*)malloc(old_n_len);    // buffer for old file name
+        char* new_n_len = (unsigned char*)malloc(new_n_len);        // buffer for new file name
+        
+        memcpy(old_file_name, message, old_n_len);                  // copy in message
+        memcpy(new_n_len, message + old_file_name, new_n_len);      // copy in message
+        
+        string old_s = old_file_name;   // string to contain the old file name
+        string new_s = new_file_name;   // string to contain the new file name
+        
+        cout << "+++++++++ " << "old file name: " << old_file_name << " " << old_s << "\n";
+        cout << "+++++++++ " << "new file name: " << new_file_name << " " << new_s << "\n";
+        
+        // white list control
+        if ( check_file_name(old_s) && check_file_name(new_file_name))
+        {
+            // strings are correct
+            // -- verify that the file with the old file name exist
+            FILE* target = fopen(old_file_name, "r");                   // open target file
+            if(!target)                                                 // CA cert file control check
+            {
+                // set error mex
+                cmd_code = -1;
+                char temp[] = "The file specified by the name passed as a parameter is not present on the server.\n";
+                msg_len = strlen(temp) + 1;       // update msg_len
+               	message = (unsigned char*)malloc(msg_len);
+               	if(!message)
+                   	error("Error in handle_rename_req: message Malloc error.\n");
+               	memcpy(message, temp, msg_len);         // copy in message
+            }
+            else        // the file xist
+            {
+                fclose(target);         // close file
+                // add path
+                // rename file 
+                result = rename(old_file_name , new_file_name);
+                if ( result == 0 )      // succesfully renamed
+                {
+                    char temp[] = "File successfully renamed.\n";
+                    msg_len = strlen(temp) + 1;       // update msg_len
+                   	message = (unsigned char*)malloc(msg_len);
+                   	if(!message)
+                       	error("Error in handle_rename_req: message Malloc error.\n");
+                   	memcpy(message, temp, msg_len);         // copy in message
+                }
+                else            // rename failed
+                {
+                    // set error mex
+                    cmd_code = -1;
+                    char temp[] = "Rename failed.\n";
+                    msg_len = strlen(temp) + 1;       // update msg_len
+                   	message = (unsigned char*)malloc(msg_len);
+                   	if(!message)
+                       	error("Error in handle_rename_req: message Malloc error.\n");
+                   	memcpy(message, temp, msg_len);         // copy in message
+                }
+            }
+            
+        }
+        else        // strings aren't correct
+        {
+            // set error mex
+            cmd_code = -1;
+            char temp[] = "The file names passed did not pass the white list check, they have characters that are not allowed in them.\n";
+            msg_len = strlen(temp) + 1;       // update msg_len
+           	message = (unsigned char*)malloc(msg_len);
+           	if(!message)
+               	error("Error in handle_rename_req: message Malloc error.\n");
+           	memcpy(message, temp, msg_len);         // copy in message
+        }
+    }
+    
+    // 2) send response
+    // -- set aad (nonce)
+    unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
+	if(!aad)
+        error("Error in user_file_list: aad Malloc error.\n");
+    memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
+	
+	// -- set buffer
+	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+	if(!buffer)
+    	error("Error in user_file_list: buffer Malloc error.\n");
+    
+    // encrypt message
+    ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+	if (ret >= 0)      // successfully encrypted
+	{
+    	// send error message
+		send_msg(socket, ret, buffer);                     // send user file list to client
+		inc_counter_nonce(current_user->server_counter);   // update server counter
+	}
+	
+	// free all
+    free(buffer);          // free buffer containing the encrypted message
+	free(message);         // free the buffer containing the cleartext message (user file list)
+	free(aad);             // free aad 8in this case the server nonce
+}
+
+/*
+    Description:  
         function that set offline an user
     Parameters:
         - username: username of the user to be checked
@@ -767,6 +904,7 @@ void *client_handler(void* arguments)
                 	}
                 case 4:    // rename request
                 	{
+                    	handle_rename_req(socket, current_user, session_key, buffer, message, ret)
                     	break;
                 	}
                 case 5:    // delate request
