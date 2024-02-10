@@ -56,7 +56,6 @@ string mex_user_file_list_err = "ERROR: The username sent in the file list reque
 
 // semaphores
 pthread_mutex_t users_mutex;            // semaphore for list<User> users
-pthread_mutex_t thread_list_mutex;      // semaphore for list of thread   
            
 
 // ------------------------------- end: struct and global variables -------------------------------
@@ -116,10 +115,6 @@ void semaphores_init()
 	{
     	error("Error in the initialization of the semaphore for the user list.\n");    // error in the creation of the semaphore
 	}
-	if (pthread_mutex_init(&thread_list_mutex , NULL) != 0)    // initialize mutex for the thread list
-	{
-    	error("Error in the initialization of the semaphore for the thread list.\n");  // error in the creation of the semaphore
-	}
 }
 
 //    Description:  function to destroy the semaphores
@@ -128,10 +123,6 @@ void semaphores_destroy()
     if (pthread_mutex_destroy(&users_mutex) != 0)        // destroy mutex for the users list
     {
         error("Error in the destruction of the semaphore for the user list.\n");     // error in the destruction of the semaphore
-	}
-	if (pthread_mutex_destroy(&thread_list_mutex) != 0)  // destroy mutex for the thread list
-    {
-        error("Error in the destruction of the semaphore for the thread list.\n");   // error in the destruction of the semaphore
 	}
 }
 // ------------------------------- end: semaphore management functions -------------------------------
@@ -807,7 +798,6 @@ int main(int argc, char *argv[])
 	int ret, sock, server_port;
 	socklen_t clilen;
 	struct sockaddr_in addr_server, cli_addr;
-	//list<pthread_t> thread_list;                // list of the created thread, one thread for each served user
 
     // check that the correct number of parameters have been passed
     if (argc != 2)		
@@ -875,12 +865,8 @@ int main(int argc, char *argv[])
 
                 // create new thread
                 pthread_t thread;
-                pthread_mutex_lock(&thread_list_mutex);          // lock for thread list
-                //thread_list.push_back(thread);
-        		pthread_mutex_unlock(&thread_list_mutex);        // unlock for thread list
             
         		// manage the client with the new thread
-        		//if(pthread_create(&thread_list.back(), NULL, &client_handler, (void *)args)  != 0 )
         		if(pthread_create(&thread, NULL, &client_handler, (void *)args)  != 0 )
             		cerr << "Failed to create thread\n";
     	    }
