@@ -25,6 +25,10 @@
 #define MSG_MAX 10000
 #define NONCE_SIZE 4                // size of the nonce
 #define MSG_AAD_OFFSET 34           // offset of the AAD(usually only nonce) in the message format (AAD is after cmd_code,tag,IV,nonce_len)
+
+static char ok_chars[] = "abcdefghijklmnopqrstuvwxyz"
+                         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                         "1234567890_./\";    // characters that are permitted by the white list
 // ------------------------------- end: constant -------------------------------
 
 using namespace std;
@@ -61,7 +65,56 @@ void error(const char *msg)
     perror(msg);
     exit(1);
 }
+// ------------------------------- end: function to manage error message -------------------------------
 
+// ------------------------------- start: function to canonicalization and command injection -------------------------------
+/*
+    Description: 
+        function to check filenames (or strings in general) passed as parameters. The function will use canonicalisation and 
+        white listing to check that the string passed conforms to the security rules.
+    Parameters:     
+        - str: the string to be checked
+    Return:
+        - true: if the string passes the control checks, false: if the string dosn't pass the control checks
+*/
+bool check_file_name(const string& str)
+{
+    // white list control
+    // -- first control, check if the string is empty
+    if(str1.empty()) 
+    {
+        cerr << "Error the string entered is empty.\n";
+        return false;       // return false
+    }
+    // -- second control, searches in str for the first character that does not match any of the characters specified in ok_chars
+    if(str.find_first_not_of(ok_chars) != string::npos)     // if no such characters are found, the function returns string::npos.
+    {
+        cerr << "There are non-conforming characters in the entered string.\n";
+        cerr << "The list of accepted characters is: " << ok_chars << ".\n";
+        return false;
+    }
+    
+    // canonicalization
+    char* canon_str = realpath(str.c_str(), NULL);      // get the real path 
+    if(!canon_str)          // error
+        return false;  
+    // -- check that path is an allowed path, the files in the client must be in 
+    cout << "The canon string is: " << canon_str << "\n";
+    /*
+    // check that directory is "/home" (in some systems this should be: "/home/<username>")
+    if(strncmp(canon_str2, "/home/", strlen("/home/")) != 0) 
+    { 
+        free(canon_str2); 
+        return false; 
+    } 
+    */
+    
+    return true;
+}
+
+// ------------------------------- end: function to canonicalization and command injection -------------------------------
+
+// ------------------------------- start: function to to manage server and client nonce -------------------------------
 /*
     Description:    function that increments the counter passed as parameter by 1 (module maximum value for unsigned int)
     Parameters:     counter nonce to be updated
@@ -69,11 +122,11 @@ void error(const char *msg)
 void inc_counter_nonce(unsigned int &counter)
 {
 	if(counter == UINT_MAX)    // check if the maximum value is reached
-		counter=0;                // reset to 0
+		counter = 0;              // reset to 0
 	else
 		counter++;                // increment of 1
 }
-// ------------------------------- end: function to manage error message -------------------------------
+// ------------------------------- end: function to to manage server and client nonce -------------------------------
 
 // ------------------------------- start: function to send and receive messages via sockets -------------------------------
 /*
