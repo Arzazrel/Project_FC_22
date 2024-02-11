@@ -296,7 +296,7 @@ void send_list_request(char* username, unsigned char* session_key)
 */
 void send_rename_request(unsigned char* session_key, char* old_file_name, char* new_file_name)
 {
-    unsigned char* message;         // contain the message to be sent
+    unsigned char* message = 0;     // contain the message to be sent
     unsigned int msg_len = 0;       // the len of the message to encrypt
     short cmd_code = 4;             // code of the command
 	unsigned int aad_len;           // len of AAD
@@ -361,11 +361,13 @@ void send_rename_request(unsigned char* session_key, char* old_file_name, char* 
         
         // free message and reallocate with a different dimension
         free(message);     // free the buffer containing the cleartext message (user file list)
-   	message = (unsigned char*)malloc(MAX_SIZE);
+       	message = (unsigned char*)malloc(MAX_SIZE);
+       	if(!message)
+             	error("Error in send_rename_request: message Malloc error.\n");
     	
     	// 2) receive the response of the server
     	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
-	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+    	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
     	
     	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
     	{
@@ -415,6 +417,7 @@ void send_delete_request(unsigned char* session_key, char* file_name)
     short cmd_code = 5;             // code of the command
 	unsigned int aad_len;           // len of AAD
     int ret;
+    char* choice;                   // contain the choice of the user 'y' or 'n'
     
     // check the dimension fo a string
     if (strlen(file_name) > MAX_DIM_PAR)
@@ -429,11 +432,172 @@ void send_delete_request(unsigned char* session_key, char* file_name)
     if ( check_file_name(temp_f_n) )
     {
         // strings is correct, remove first part of the path
-        int pre_path_len = strlen(ded_store_path.c_str());
-        string f_n = temp_f_n.substr(pre_path_len,MAX_DIM_FILE_NAME);
+        //int pre_path_len = strlen(ded_store_path.c_str());
+        //string f_n = temp_f_n.substr(pre_path_len,MAX_DIM_FILE_NAME);
+        
         // 1) create and send the request to the server -> format is -> ( cmd_code | tag | IV | aad_len | nonce | file_name )
+        // -- set the message to ecnrypt
+    	msg_len = strlen(file_name) + 1;			   // update msg_len
+    	message = (unsigned char*)malloc(msg_len);     // allocate       
+    	if(!message)
+          	error("Error in send_delete_request: message Malloc error.\n");
+    	memcpy(message, file_name, msg_len);            // copy in message
+    	
+    	// -- set aad (client nonce)
+    	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
+    	if(!aad)
+        	error("Error in send_delete_request: aad Malloc error.\n");
+    	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
+    	
+    	// -- buffer 
+    	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+    	if(!buffer)
+        	error("Error in send_delete_request: buffer Malloc error.\n");
+        	
+        // -- encrypt the message, cmd_code for the list operation is 1
+    	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+    	if (ret >= 0)      // successfully encrypted
+    	{
+        	// send the list request to the server
+    		send_msg(socket_server, ret, buffer);     // send user file list to client
+    		inc_counter_nonce(client_counter);        // update client counter
+    	}
+        
+        // free message and reallocate with a different dimension
+        free(message);     // free the buffer containing the cleartext message (user file list)
+       	message = (unsigned char*)malloc(MAX_SIZE);
+       	if(!message)
+             	error("Error in send_delete_request: message Malloc error.\n");
+    	
+        // 2) receive the confirmation request from the server
+        msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
+    	unsigned int received_counter =*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+    	
+    	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+    	{
+    		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+    		inc_counter_nonce(server_counter);    // increment the server nonce
+    		
+    		if (ret >= 0)                         // correctly decrypted 
+    		{
+        		// check the cmd_code received
+        		if ((cmd_code != -1) && (cmd_code == 5))  // all is ok
+        		{
+            		memcpy(message + ret - 1, "\0", 1);   // for secure
+                	cout << message;                      // print the message
+                	
+                	bool get_choice = false;
+                	// take the choice of the user, 'y' if wants to delete or 'n' if wants to stop
+                	while (!get_choice)
+                	{
+                    	// get the user's choice
+                        char *res = fgets(choice, 1, stdin); // reads at most the specified number of characters (including \n)
+                        if (res == 0)  // error while reading or read zero bytes (i.e. pressed ctrl+d as first character)
+                    	{
+                            cerr << "stdin read error.\n";
+                    	}
+                    	if ( (*choice == 'y') || (*choice == 'Y') || (*choice == 'n') || (*choice == 'N'))     // correct choices
+                        	get_choice = true;     // set variable to end the while
+                	}			
+        		}
+        		else if (cmd_code == -1)                  // error message
+        		{
+        			memcpy(message + ret - 1, "\0", 1);   // for secure
+                	cerr << message;                      // print the error message
+                	return;            // delete operation failed
+        		}
+        		else
+            		cerr << err_rec_cmd_code;             // error message
+            		return;            // delete operation failed
+    		}
+    		else
+        	{
+            	cerr << "Error in send_delete_request: decrypt error.\n";
+        	}
+        	
+        	// free message and reallocate with a different dimension
+            free(message);     // free the buffer containing the cleartext message (user file list)
+        	free(buffer);      // free buffer containing the encrypted message
+        	free(aad);         // free aad 8in this case the server nonce	
+        	
+        	// 3) send confirmation or rejection
+        	// -- set the message to ecnrypt
+        	msg_len = 1;			                       // update msg_len
+        	message = (unsigned char*)malloc(msg_len);     // allocate       
+        	if(!message)
+              	error("Error in send_delete_request: message Malloc error.\n");
+        	memcpy(message, choice, msg_len);            // copy in message
+        	
+        	// -- set aad (client nonce)
+        	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
+        	if(!aad)
+            	error("Error in send_delete_request: aad Malloc error.\n");
+        	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
+        	
+        	// -- buffer 
+        	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+        	if(!buffer)
+            	error("Error in send_delete_request: buffer Malloc error.\n");
+            	
+            // -- encrypt the message, cmd_code for the list operation is 1
+        	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+        	if (ret >= 0)      // successfully encrypted
+        	{
+            	// send the list request to the server
+        		send_msg(socket_server, ret, buffer);     // send user file list to client
+        		inc_counter_nonce(client_counter);        // update client counter
+        	}
+        	
+        	// free message and reallocate with a different dimension
+            free(message);     // free the buffer containing the cleartext message (user file list)
+        	message = (unsigned char*)malloc(MAX_SIZE);
+        	if(!message)
+              	error("Error in send_delete_request: message Malloc error.\n");
+              	
+        	// 4) receive the final response of the operation
+        	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
+        	unsigned int received_counter =*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+        	
+        	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+        	{
+        		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+        		inc_counter_nonce(server_counter);    // increment the server nonce
+        		
+        		if (ret >= 0)                         // correctly decrypted 
+        		{
+            		// check the cmd_code received
+            		if ((cmd_code != -1) && (cmd_code == 5))  // all is ok
+            		{
+                		memcpy(message + ret - 1, "\0", 1);   // for secure
+                    	cout << message;                      // print the message
+            		}
+            		else if (cmd_code == -1)                  // error message
+            		{
+            			memcpy(message + ret - 1, "\0", 1);   // for secure
+                    	cerr << message;                      // print the error message
+                    	return;            // delete operation failed
+            		}
+            		else
+                		cerr << err_rec_cmd_code;             // error message
+                		return;            // delete operation failed
+        		}
+        		else
+            	{
+                	cerr << "Error in send_delete_request: decrypt error.\n";
+            	}
+        	}
+        	else           // else of the first control of nonce
+            	cerr << err_rec_nonce;	
+            	
+            // free message and reallocate with a different dimension
+            free(message);     // free the buffer containing the cleartext message (user file list)
+        	free(buffer);      // free buffer containing the encrypted message
+        	free(aad);         // free aad 8in this case the server nonce	
+    	}
+    	else           // else of the first control of nonce
+    		cerr << err_rec_nonce;
     }
-    else
+    else        // else of the control of file name
         cerr << delete_failed;
 }
 // ------------------------------- end: functions to perform user commands -------------------------------
