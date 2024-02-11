@@ -605,11 +605,11 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
             {
                 // set the message for the confirm or not
                 string temp = temp_f_n + mex_del_op;
-                msg_len = strlen(temp) + 1;       // update msg_len
+                msg_len = strlen(temp.c_str()) + 1;       // update msg_len
                	message = (unsigned char*)malloc(msg_len);
                	if(!message)
                    	error("Error in handle_delete_req: message Malloc error.\n");
-               	memcpy(message, temp, msg_len);         // copy in message
+               	memcpy(message, temp.c_str(), msg_len);         // copy in message
             }
             else        // the file to be deleted there isn't
             {
@@ -662,19 +662,23 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
     	free(message);      // free the buffer containing the cleartext message (user file list)
     	free(aad);          // free aad 8in this case the server nonce
     	
+    	// check if there was an error, in this case have to exit from the function
+    	if (cmd_code == -1)
+    		return;
+    	
         // 3) receive delete confirmation and perform or block the operation
         // -- set buffer
-    	unsigned char* buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+    	buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
     	if(!buff)
         	error("Error in handle_delete_req: buff Malloc error.\n");
         	
         // -- set aad (nonce)
-        unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
+        aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
     	if(!aad)
             error("Error in handle_delete_req: aad Malloc error.\n");
         memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
         
-        unsigned char* message = (unsigned char*)malloc(MAX_SIZE);
+        message = (unsigned char*)malloc(MAX_SIZE);
     	if(!message)
         	error("Error in handle_delete_req: message Malloc error.\n");
         	
@@ -687,59 +691,75 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
     	// check if the nonce is correct
     	if(received_counter == current_user->client_counter)          // if is equal is correct otherwhise the message is not fresh
     	{
-        	ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+        	ret = decryptor(buff, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
         	inc_counter_nonce(current_user->client_counter);          // increment the client nonce		
+        	// check the cmd_code received
+        	if (cmd_code == 5)  // if for check cmd_code received
+        	{
+        		// -- check if the user confirm or not the delete
+		    	char choice =*(char*)(message);
+		    	cout << "+++++++++ " << "user response: " << choice << "\n";     // +++++++++++++++++++++++++++++
+		    	if((choice == 'y') || (choice == 'Y'))         // user confirm delete 
+		    	{
+		        	// delete the file 
+		        	if (remove(path.c_str()) == 0)     // return 0​ on success or non-zero value on error. 
+		        	{
+		            	// set the message for the confirm or not
+		                char temp[] = "File successfully deleted.\n";
+		                msg_len = strlen(temp) + 1;       // update msg_len
+		               	send_mex = (unsigned char*)malloc(msg_len);
+		               	if(!send_mex)
+		                   	error("Error in handle_delete_req: send_mex Malloc error.\n");
+		               	memcpy(send_mex, temp, msg_len);         // copy in message
+		            }
+		        	else       // delete failed
+		        	{
+		            	// set error mex
+		                cmd_code = -1;
+		                char temp[] = "Error: delete operation failed.\n";
+		                msg_len = strlen(temp) + 1;       // update msg_len
+		               	send_mex = (unsigned char*)malloc(msg_len);
+		               	if(!send_mex)
+		                   	error("Error in handle_delete_req: send_mex Malloc error.\n");
+		               	memcpy(send_mex, temp, msg_len);         // copy in message
+		        	}
+		    	}
+		    	else if((choice == 'n') || (choice == 'N'))     // user doesn't confirm delete
+		    	{
+		        	cout << "Delete operation of the file: " << file_name << " for the user: " << current_user->username << " blocked by the user.\n";
+		        	// set the response for the user
+		            char temp[] = "Delete operation successfully blocked, the file was not deleted.\n";
+		            msg_len = strlen(temp) + 1;       // update msg_len
+		           	send_mex = (unsigned char*)malloc(msg_len);
+		           	if(!send_mex)
+		               	error("Error in handle_delete_req: send_mex Malloc error.\n");
+		           	memcpy(send_mex, temp, msg_len);         // copy in message
+		    	}
+		    	else           // user send incorrect choice
+		    	{
+		        	// set error mex
+		            cmd_code = -1;
+		            char temp[] = "Error: user choice not recognised. delete operation failed..\n";
+		            msg_len = strlen(temp) + 1;       // update msg_len
+		           	send_mex = (unsigned char*)malloc(msg_len);
+		           	if(!send_mex)
+		               	error("Error in handle_delete_req: send_mex Malloc error.\n");
+		           	memcpy(send_mex, temp, msg_len);         // copy in message
+		    	}
+        	}	// end: if for check cmd_code received
+        	else	// start: else for check cmd_code received
+        	{
+        		// set error mex
+		    	cmd_code = -1;
+		        char temp[] = "Error: received cmd_code is incorrect.\n";
+		        msg_len = strlen(temp) + 1;       // update msg_len
+		        send_mex = (unsigned char*)malloc(msg_len);
+		        if(!send_mex)
+		        	error("Error in handle_delete_req: send_mex Malloc error.\n");
+		        memcpy(send_mex, temp, msg_len);         // copy in message
+        	}		// end: else for check cmd_code received
         	
-        	// -- check if the user confirm or not the delete
-        	char choice =*(char*)(message);
-        	cout << "+++++++++ " << "user response: " << choice << "\n";     // +++++++++++++++++++++++++++++
-        	if((choice == 'y') || (choice == 'Y'))         // user confirm delete 
-        	{
-            	// delete the file 
-            	if (remove(path.c_str()) == 0)     // return 0​ on success or non-zero value on error. 
-            	{
-                	// set the message for the confirm or not
-                    char temp[] = "File successfully deleted.\n";
-                    msg_len = strlen(temp) + 1;       // update msg_len
-                   	send_mex = (unsigned char*)malloc(msg_len);
-                   	if(!send_mex)
-                       	error("Error in handle_delete_req: send_mex Malloc error.\n");
-                   	memcpy(send_mex, temp, msg_len);         // copy in message
-                }
-            	else       // delete failed
-            	{
-                	// set error mex
-                    cmd_code = -1;
-                    char temp[] = "Error: delete operation failed.\n";
-                    msg_len = strlen(temp) + 1;       // update msg_len
-                   	send_mex = (unsigned char*)malloc(msg_len);
-                   	if(!send_mex)
-                       	error("Error in handle_delete_req: send_mex Malloc error.\n");
-                   	memcpy(send_mex, temp, msg_len);         // copy in message
-            	}
-        	}
-        	else if((choice == 'n') || (choice == 'N'))     // user doesn't confirm delete
-        	{
-            	cout << "Delete operation of the file: " << file_name << " for the user: " << current_user->username << " blocked by the user.\n";
-            	// set the response for the user
-                char temp[] = "Delete operation successfully blocked, the file was not deleted.\n";
-                msg_len = strlen(temp) + 1;       // update msg_len
-               	send_mex = (unsigned char*)malloc(msg_len);
-               	if(!send_mex)
-                   	error("Error in handle_delete_req: send_mex Malloc error.\n");
-               	memcpy(send_mex, temp, msg_len);         // copy in message
-        	}
-        	else           // user send incorrect choice
-        	{
-            	// set error mex
-                cmd_code = -1;
-                char temp[] = "Error: user choice not recognised. delete operation failed..\n";
-                msg_len = strlen(temp) + 1;       // update msg_len
-               	send_mex = (unsigned char*)malloc(msg_len);
-               	if(!send_mex)
-                   	error("Error in handle_delete_req: send_mex Malloc error.\n");
-               	memcpy(send_mex, temp, msg_len);         // copy in message
-        	}
+        	
     	}
     	else
         	cerr << err_rec_nonce;         // print mex error
@@ -751,13 +771,13 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
     	
     	// 4) send the final response of the delete opration
         // -- set aad (nonce)
-        unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
+        aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
     	if(!aad)
             error("Error in handle_delete_req: aad Malloc error.\n");
         memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
     	
     	// -- set buffer
-    	unsigned char* buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+    	buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
     	if(!buff)
         	error("Error in handle_delete_req: buff Malloc error.\n");
         

@@ -97,6 +97,7 @@ bool check_file_name(const string& str)
     }
     
     // canonicalization
+    // realpath() fucntion -> expands all symbolic links and resolves references to /./, /../ and extra '/' characters
     /*
     char* canon_str = realpath(str.c_str(), NULL);      // get the real path 
     if(!canon_str)          // error

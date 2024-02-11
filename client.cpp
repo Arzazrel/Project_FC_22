@@ -417,7 +417,7 @@ void send_delete_request(unsigned char* session_key, char* file_name)
     short cmd_code = 5;             // code of the command
 	unsigned int aad_len;           // len of AAD
     int ret;
-    char* choice;                   // contain the choice of the user 'y' or 'n'
+    char choice;           			// contain the choice of the user 'y' or 'n'
     
     // check the dimension fo a string
     if (strlen(file_name) > MAX_DIM_PAR)
@@ -487,18 +487,21 @@ void send_delete_request(unsigned char* session_key, char* file_name)
                 	cout << message;                      // print the message
                 	
                 	bool get_choice = false;
+                	string c;
                 	// take the choice of the user, 'y' if wants to delete or 'n' if wants to stop
                 	while (!get_choice)
                 	{
-                    	// get the user's choice
-                        char *res = fgets(choice, 1, stdin); // reads at most the specified number of characters (including \n)
-                        if (res == 0)  // error while reading or read zero bytes (i.e. pressed ctrl+d as first character)
+                    	getline(std::cin, c);		// get user choice
+                    	if(!std::cin)
                     	{
-                            cerr << "stdin read error.\n";
+                    		cerr << "error in std::cin.\n";
+                    		continue;
                     	}
-                    	if ( (*choice == 'y') || (*choice == 'Y') || (*choice == 'n') || (*choice == 'N'))     // correct choices
+                    	choice = c[0];		// get the first char
+                    	//cin >> choice;
+                    	if ( (choice == 'y') || (choice == 'Y') || (choice == 'n') || (choice == 'N'))     // correct choices
                         	get_choice = true;     // set variable to end the while
-                	}			
+                	}		
         		}
         		else if (cmd_code == -1)                  // error message
         		{
@@ -507,8 +510,10 @@ void send_delete_request(unsigned char* session_key, char* file_name)
                 	return;            // delete operation failed
         		}
         		else
-            		cerr << err_rec_cmd_code;             // error message
+        		{
+        			cerr << err_rec_cmd_code;             // error message
             		return;            // delete operation failed
+        		}
     		}
     		else
         	{
@@ -526,7 +531,7 @@ void send_delete_request(unsigned char* session_key, char* file_name)
         	message = (unsigned char*)malloc(msg_len);     // allocate       
         	if(!message)
               	error("Error in send_delete_request: message Malloc error.\n");
-        	memcpy(message, choice, msg_len);            // copy in message
+        	memcpy(message, &choice, msg_len);            // copy in message
         	
         	// -- set aad (client nonce)
         	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
