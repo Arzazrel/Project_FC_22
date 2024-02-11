@@ -304,7 +304,7 @@ void handle_user_file_list_req(int socket, User* current_user, unsigned char* se
 */
 void handle_rename_req(int socket, User* current_user, unsigned char* session_key, unsigned char* buffer ,unsigned char* cleartext, unsigned int cleartext_size)
 {
-    unsigned char* message;         // contain the message to be sent
+    unsigned char* message = 0;     // contain the message to be sent
     unsigned int msg_len = 0;       // len of the message sent or received
     unsigned int aad_len;
     int ret;
@@ -356,9 +356,8 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         {
             // strings are correct
             string old_path = ded_store_path + current_user->username + "/" + old_file_name;
-            // -- verify that the file with the old file name exist
-            FILE* target = fopen(old_path.c_str(), "r");                   // open target file
-            if(!target)                                                 // target file control check
+            // -- verify that the file with the old file name exist, if exist return 0 otherwhise return -1
+            if(access(old_path.c_str(), F_OK ) == -1)                                                 // target file control check
             {
                 // set error mex
                 cmd_code = -1;
@@ -371,25 +370,38 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
             }
             else        // the file xist
             {
-                fclose(target);         // close file
-                // add path
+                // verify that the file with the new file name exist, if exist return 0 otherwhise return -1
                 string new_path = ded_store_path + current_user->username + "/" + new_file_name;
-                // rename file 
-                ret = rename(old_path.c_str() , new_path.c_str());
-                if ( ret == 0 )      // succesfully renamed
+                if(access(new_path.c_str(), F_OK ) == -1)                                                 // target file control check
                 {
-                    char temp[] = "File successfully renamed.\n";
-                    msg_len = strlen(temp) + 1;       // update msg_len
-                   	message = (unsigned char*)malloc(msg_len);
-                   	if(!message)
-                       	error("Error in handle_rename_req: message Malloc error.\n");
-                   	memcpy(message, temp, msg_len);         // copy in message
+                    // the file dosn't exist, can rename the old file wih the new file
+                    ret = rename(old_path.c_str() , new_path.c_str());          // rename file 
+                    if ( ret == 0 )      // succesfully renamed
+                    {
+                        char temp[] = "File successfully renamed.\n";
+                        msg_len = strlen(temp) + 1;       // update msg_len
+                       	message = (unsigned char*)malloc(msg_len);
+                       	if(!message)
+                           	error("Error in handle_rename_req: message Malloc error.\n");
+                       	memcpy(message, temp, msg_len);         // copy in message
+                    }
+                    else            // rename failed
+                    {
+                        // set error mex
+                        cmd_code = -1;
+                        char temp[] = "Rename failed.\n";
+                        msg_len = strlen(temp) + 1;       // update msg_len
+                       	message = (unsigned char*)malloc(msg_len);
+                       	if(!message)
+                           	error("Error in handle_rename_req: message Malloc error.\n");
+                       	memcpy(message, temp, msg_len);         // copy in message
+                    }
                 }
-                else            // rename failed
+                else    // already exist a file named as the new name specified, you cannot rename the file with this new file name
                 {
                     // set error mex
                     cmd_code = -1;
-                    char temp[] = "Rename failed.\n";
+                    char temp[] = "Error: already exist a file named as the new name specified, you cannot rename the file with this new file name.\n";
                     msg_len = strlen(temp) + 1;       // update msg_len
                    	message = (unsigned char*)malloc(msg_len);
                    	if(!message)
@@ -410,6 +422,10 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
                	error("Error in handle_rename_req: message Malloc error.\n");
            	memcpy(message, temp, msg_len);         // copy in message
         }
+        
+        // free all
+        free(old_file_name);    
+        free(new_file_name);
     }
     
     // 2) send response
