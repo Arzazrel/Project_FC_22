@@ -140,8 +140,8 @@ void semaphores_destroy()
 void send_user_file_list(int socket, User* current_user, unsigned char* session_key)
 {
     // read the name of dedicated stored folder 
-    struct dirent **folder_list;
-    char** file_name;               // contain the name of the file in the folder
+    struct dirent **folder_list = 0;
+    char** file_name = 0;           // contain the name of the file in the folder
     unsigned char* message;         // contain the message to be sent
     int ret;
     
@@ -167,11 +167,18 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
     }
     else    // there are files in the dedicated storage
     {
+    	file_name = (char**)malloc((n-2)*sizeof(char*));	//
+    	int temp_len;					//
         // scroll through all the folder names found, starts with i = 2 because always the first two positions are occupied by '.' and '..'
         for (int i = 2; i < n; i++ )
         { 
-            file_name[i-2] = folder_list[i]->d_name;   // take the name of i-th file in the folder
-            msg_len = strlen(file_name[i-2]) + 1;      // update size, one more for \n
+            temp_len = strlen(folder_list[i]->d_name) + 1;
+            file_name[i-2] = (char*)malloc(temp_len);
+            // take the name of i-th file in the
+            memcpy(file_name[i-2], folder_list[i]->d_name, temp_len - 1);
+            file_name[i-2][temp_len-1] = '\0';
+            
+            msg_len += temp_len;      	  // update size, one more for \n
                     
             free(folder_list[i]);               // free structure for this file
         }
@@ -189,11 +196,13 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
         	msg_len += strlen(file_name[i]);          // update msg_len for strlen
         	memcpy(message + msg_len, "\n", 1);
         	msg_len += 1;                          // update msg_len of 1
+        	
+        	free(file_name[i]);               // free structure for this file
     	}
     	memcpy(message + msg_len - 1, "\0", 1);       
     }
     
-    cout << "++++++ user_file_list message: " << message;      // +++++++++++++ test mode +++++++++++++
+    cout << "++++++ user_file_list message: " << message << "\n";      // +++++++++++++ test mode +++++++++++++
     
     // send message
     unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
@@ -218,7 +227,8 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
 	// free all
 	free(buffer);      // free buffer containing the encrypted message
 	free(message);     // free the buffer containing the cleartext message (user file list)
-	free(aad);         // free aad 8in this case the server nonce
+	free(aad);         // free aad (in this case the server nonce)
+	free(file_name); 
 }
 
 /*
@@ -296,8 +306,11 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
 {
     unsigned char* message;         // contain the message to be sent
     unsigned int msg_len = 0;       // len of the message sent or received
+    unsigned int aad_len;
     int ret;
     short cmd_code = 4;
+    
+    cout << "Rename request arrived from user: " << current_user->username << ".\n";
     
     // check the received cleartext. cleartext is composed of the old and the new name
     if( cleartext_size > (2 * MAX_DIM_FILE_NAME) )     
@@ -317,14 +330,20 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         unsigned int old_n_len;     // take old file name len
         unsigned int new_n_len;     // take new file name len
         
+        aad_len = *(unsigned int*)(buffer + MSG_AAD_OFFSET - sizeof(unsigned int)) ;
+        cout << "+++++++++ " << "aad size: " << aad_len << " cleartext size: " << cleartext_size << "\n";
+        
         old_n_len =*(unsigned int*)(buffer + MSG_AAD_OFFSET + sizeof(unsigned int));   //take the received client nonce
         new_n_len =*(unsigned int*)(buffer + MSG_AAD_OFFSET + sizeof(unsigned int) + sizeof(unsigned int));   //take the received client nonce
         
-        char* old_file_name = (unsigned char*)malloc(old_n_len);    // buffer for old file name
-        char* new_n_len = (unsigned char*)malloc(new_n_len);        // buffer for new file name
+        cout << "+++++++++ " << "old file name size: " << old_n_len << " sizeoff: " << sizeof(unsigned int) << "\n";
+        cout << "+++++++++ " << "new file name size: " << new_n_len << " sizeoff: " << sizeof(unsigned int) << "\n";
         
-        memcpy(old_file_name, message, old_n_len);                  // copy in message
-        memcpy(new_n_len, message + old_file_name, new_n_len);      // copy in message
+        char* old_file_name = (char*)malloc(old_n_len);    // buffer for old file name
+        char* new_file_name = (char*)malloc(new_n_len);    // buffer for new file name
+        
+        memcpy(old_file_name, cleartext, old_n_len);                  // copy in message
+        memcpy(new_file_name, cleartext + old_n_len, new_n_len);      // copy in message
         
         string old_s = old_file_name;   // string to contain the old file name
         string new_s = new_file_name;   // string to contain the new file name
@@ -336,9 +355,10 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         if ( check_file_name(old_s) && check_file_name(new_file_name))
         {
             // strings are correct
+            string old_path = ded_store_path + current_user->username + "/" + old_file_name;
             // -- verify that the file with the old file name exist
-            FILE* target = fopen(old_file_name, "r");                   // open target file
-            if(!target)                                                 // CA cert file control check
+            FILE* target = fopen(old_path.c_str(), "r");                   // open target file
+            if(!target)                                                 // target file control check
             {
                 // set error mex
                 cmd_code = -1;
@@ -353,9 +373,10 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
             {
                 fclose(target);         // close file
                 // add path
+                string new_path = ded_store_path + current_user->username + "/" + new_file_name;
                 // rename file 
-                result = rename(old_file_name , new_file_name);
-                if ( result == 0 )      // succesfully renamed
+                ret = rename(old_path.c_str() , new_path.c_str());
+                if ( ret == 0 )      // succesfully renamed
                 {
                     char temp[] = "File successfully renamed.\n";
                     msg_len = strlen(temp) + 1;       // update msg_len
@@ -399,21 +420,21 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
     memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
 	
 	// -- set buffer
-	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
-	if(!buffer)
-    	error("Error in user_file_list: buffer Malloc error.\n");
+	unsigned char* buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+	if(!buff)
+    	error("Error in user_file_list: buff Malloc error.\n");
     
     // encrypt message
-    ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+    ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buff);
 	if (ret >= 0)      // successfully encrypted
 	{
     	// send error message
-		send_msg(socket, ret, buffer);                     // send user file list to client
+		send_msg(socket, ret, buff);                     // send user file list to client
 		inc_counter_nonce(current_user->server_counter);   // update server counter
 	}
 	
 	// free all
-    free(buffer);          // free buffer containing the encrypted message
+    free(buff);          // free buffer containing the encrypted message
 	free(message);         // free the buffer containing the cleartext message (user file list)
 	free(aad);             // free aad 8in this case the server nonce
 }
@@ -904,7 +925,7 @@ void *client_handler(void* arguments)
                 	}
                 case 4:    // rename request
                 	{
-                    	handle_rename_req(socket, current_user, session_key, buffer, message, ret)
+                    	handle_rename_req(socket, current_user, session_key, buffer, message, ret);
                     	break;
                 	}
                 case 5:    // delate request

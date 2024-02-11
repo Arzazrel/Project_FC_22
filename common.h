@@ -30,7 +30,7 @@
 
 static char ok_chars[] = "abcdefghijklmnopqrstuvwxyz"
                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                         "1234567890_./\";    // characters that are permitted by the white list
+                         "1234567890_./";    // characters that are permitted by the white list
 // ------------------------------- end: constant -------------------------------
 
 using namespace std;
@@ -83,7 +83,7 @@ bool check_file_name(const string& str)
 {
     // white list control
     // -- first control, check if the string is empty
-    if(str1.empty()) 
+    if(str.empty()) 
     {
         cerr << "Error the string entered is empty.\n";
         return false;       // return false
@@ -97,11 +97,16 @@ bool check_file_name(const string& str)
     }
     
     // canonicalization
+    /*
     char* canon_str = realpath(str.c_str(), NULL);      // get the real path 
     if(!canon_str)          // error
-        return false;  
+    {
+    	cerr << "Canonicalization failed.\n";
+    	return false; 
+    } 
     // -- check that path is an allowed path, the files in the client must be in 
     cout << "The canon string is: " << canon_str << "\n";
+    */
     /*
     // controllare prima che la prima parte sia da home
     // prendere lunghezza della stringa iniziale e poi di quella canonicalizzata, la differenza delle dimensioni sarà

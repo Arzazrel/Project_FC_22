@@ -59,6 +59,7 @@ string keys_path = "ClientFiles/Keys/";                     // path to users key
 string cert_path = "ClientFiles/Certificates/";             // path to certificates folder
 string CA_cert_path = "ClientFiles/Certificates/FoC_Proj_CA_cert.pem";      // path to CA certificate
 string CA_CRL_path = "ClientFiles/Certificates/FoC_Proj_CA_CRL.pem";        // path to CRL
+string ded_store_path = "ClientFiles/Dedicated_Storage/";   // path to dedicated storage folder
 
 // ------------------------------- end: path -------------------------------
 
@@ -72,9 +73,9 @@ string err_open_file = "Error: cannot open file.\n";                            
 string err_command = "Error: command entered incorrect, please try again.\n";   // error that occurs when an entered command is incorrect
 string err_wrong_num_par = "Error in the number of parameters passed.\n";       // error that occurs when the number of parameter is incorrect
 string err_dim_par = "Error in the dimension of parameters passed.\n";          // error that occurs when the dimension of parameter is too big
-string err_rec_nonce = "Received nonce is not fresh.\n";                        // error that occurs when the received nonce is not correct
 
 string rename_failed = "Error: rename operation failed.\n";                     // error that occurs when the rename operation failed
+string delete_failed = "Error: delete operation failed.\n";                     // error that occurs when the delete operation failed
 
 // ------------------------------- end: messages -------------------------------
 
@@ -126,7 +127,7 @@ void quit_program()
 */
 void send_close_conn_request(char* username, unsigned char* session_key)
 {
-    unsigned char* message;        // contain the message to be sent
+    unsigned char* message = 0;        // contain the message to be sent
     unsigned int msg_len = 0;      // the len of the message to encrypt
     short cmd_code;                // code of the command
 	unsigned int aad_len;          // len of AAD
@@ -134,7 +135,7 @@ void send_close_conn_request(char* username, unsigned char* session_key)
 
 	cout << "Send request to close the server connection...\n";
 	
-	// set packet to send, the packet format is -> ( 0 | tag | IV | aad_len | client_nonce | username )
+	// 1) set packet to send, the packet format is -> ( 0 | tag | IV | aad_len | client_nonce | username )
 	// -- set the message to ecnrypt
 	msg_len = strlen(username) + 1;			       // update msg_len
 	message = (unsigned char*)malloc(msg_len);     // allocate       
@@ -162,7 +163,10 @@ void send_close_conn_request(char* username, unsigned char* session_key)
 		inc_counter_nonce(client_counter);        // update client counter
 	}
 	
-	// wait the response of the server, format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
+	// 2) wait the response of the server, format is -> ( cmd_code | tag | IV | aad_len | nonce | ciphertext)
+	free(message);     // free the buffer containing the cleartext message (user file list)
+	message = (unsigned char*)malloc(MAX_SIZE);
+	
 	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
 	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
 	
@@ -244,7 +248,7 @@ void send_list_request(char* username, unsigned char* session_key)
 		inc_counter_nonce(client_counter);        // update client counter
 	}
 	
-	// wait the response of the server, format is -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
+	// 2) wait the response of the server, format is -> ( cmd_code | tag | IV | aad_len | nonce | ciphertext)
 	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
 	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
 	
@@ -284,14 +288,13 @@ void send_list_request(char* username, unsigned char* session_key)
 
 /*
     Description:  
-        function to send the request to close the connection with the server
+        function to send the rename request for a file stored on the server
     Parameters:
-        - username: username of the user that uses the client
         - session_key: buffer to contain the symmetric session key
         - old_file_name: file name to be changed
         - new_file_name: new file name
 */
-void send_rename_request(char* username, unsigned char* session_key, char* old_file_name, char* new_file_name)
+void send_rename_request(unsigned char* session_key, char* old_file_name, char* new_file_name)
 {
     unsigned char* message;         // contain the message to be sent
     unsigned int msg_len = 0;       // the len of the message to encrypt
@@ -299,6 +302,7 @@ void send_rename_request(char* username, unsigned char* session_key, char* old_f
 	unsigned int aad_len;           // len of AAD
     int ret;
     
+    cout << "Send rename request on the server...\n";
     // check the dimension fo a string
     if ((strlen(old_file_name) > MAX_DIM_PAR) || (strlen(new_file_name) > MAX_DIM_PAR) )
     {
@@ -310,15 +314,17 @@ void send_rename_request(char* username, unsigned char* session_key, char* old_f
     string new_s = new_file_name;   // string to contain the new file name
     
     // checking the correctness of strings
-    if ( check_file_name(old_s) && check_file_name(new_file_name))
+    if ( check_file_name(old_s) && check_file_name(new_s) )
     {
         // strings are correct
-        
         // 1) create and send the request to the server -> format is -> ( cmd_code | tag | IV | aad_len | aad (nonce, old_n_len, new_n_len) | ciphertext (old_file_name, new_file_name) )
     
         // -- take string len
         unsigned int old_n_len = strlen(old_file_name) + 1;     // take old file name len
         unsigned int new_n_len = strlen(new_file_name) + 1;     // take new file name len
+        
+        cout << "+++++++++ " << "old file name size: " << old_n_len << "\n";
+        cout << "+++++++++ " << "new file name size: " << new_n_len << "\n";
         
         // -- set the message to ecnrypt
     	msg_len = old_n_len + new_n_len;			            // update msg_len
@@ -334,15 +340,18 @@ void send_rename_request(char* username, unsigned char* session_key, char* old_f
         	error("Error in send_rename_request: aad Malloc error.\n");
     	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));  // copy client nonce in aad
     	memcpy(aad + sizeof(unsigned int),(unsigned char*)&old_n_len,sizeof(unsigned int));  // copy old file name len
-    	memcpy(aad + sizeof(unsigned int),(unsigned char*)&new_n_len,sizeof(unsigned int));  // copy new file name len
+    	memcpy(aad + sizeof(unsigned int)+ sizeof(unsigned int),(unsigned char*)&new_n_len,sizeof(unsigned int));  // copy new file name len
     	
     	// -- buffer 
     	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
     	if(!buffer)
         	error("Error in send_rename_request: buffer Malloc error.\n");
+        	
+        aad_len = sizeof(unsigned int)*3;
+        cout << "+++++++++ " << "aad_len size: " << aad_len << "\n";
         
         // -- encrypt the message, cmd_code for the rename operation is 4
-    	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len, session_key, buffer);
+    	ret = encryptor(cmd_code,aad, aad_len, message, msg_len, session_key, buffer);
     	if (ret >= 0)      // successfully encrypted
     	{
         	// send the rename request to the server
@@ -352,9 +361,12 @@ void send_rename_request(char* username, unsigned char* session_key, char* old_f
         
         // free message and reallocate with a different dimension
         free(message);     // free the buffer containing the cleartext message (user file list)
-    	message = (unsigned char*)malloc(MAX_SIZE);
+   	message = (unsigned char*)malloc(MAX_SIZE);
     	
     	// 2) receive the response of the server
+    	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
+	unsigned int received_counter=*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+    	
     	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
     	{
     		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
@@ -387,6 +399,42 @@ void send_rename_request(char* username, unsigned char* session_key, char* old_f
     }
     else
         cerr << rename_failed;
+}
+
+/*
+    Description:  
+        function to send the rename request for a file stored on the server
+    Parameters:
+        - session_key: buffer to contain the symmetric session key
+        - old_file_name: file name of the file  to be deleted
+*/
+void send_delete_request(unsigned char* session_key, char* file_name)
+{
+    unsigned char* message;         // contain the message to be sent
+    unsigned int msg_len = 0;       // the len of the message to encrypt
+    short cmd_code = 5;             // code of the command
+	unsigned int aad_len;           // len of AAD
+    int ret;
+    
+    // check the dimension fo a string
+    if (strlen(file_name) > MAX_DIM_PAR)
+    {
+        cerr << "File name too big.\n";
+        return;     
+    }
+    
+    string temp_f_n = file_name;   // string to contain the file name
+    
+    // checking the correctness of strings
+    if ( check_file_name(temp_f_n) )
+    {
+        // strings is correct, remove first part of the path
+        int pre_path_len = strlen(ded_store_path.c_str());
+        string f_n = temp_f_n.substr(pre_path_len,MAX_DIM_FILE_NAME);
+        // 1) create and send the request to the server -> format is -> ( cmd_code | tag | IV | aad_len | nonce | file_name )
+    }
+    else
+        cerr << delete_failed;
 }
 // ------------------------------- end: functions to perform user commands -------------------------------
 
@@ -513,7 +561,7 @@ void read_command(char* username, unsigned char* session_key)
              }
         case 4:    // rename -> 2 parameters
              {
-                char old_file_name [MAX_DIM_PAR] , new_file_name [MAX_DIM_PAR];         //conterranno l'username e psw digitati da tastiera
+                char old_file_name [MAX_DIM_PAR] , new_file_name [MAX_DIM_PAR];         // contain the file names 
                	
                	if (num_string_readed == 3)
                	{
@@ -526,7 +574,7 @@ void read_command(char* username, unsigned char* session_key)
                        	sscanf(parameters[0], "%s", old_file_name);  // take old file name
        					sscanf(parameters[1], "%s", new_file_name);  // take new file name
        					
-       					send_rename_request(username, session_key, old_file_name, new_file_name);// checking the correctness of strings
+       					send_rename_request(session_key, old_file_name, new_file_name);// checking the correctness of strings
                    	}
                	}
                	else
@@ -536,6 +584,23 @@ void read_command(char* username, unsigned char* session_key)
              }
         case 5:    // delete -> 1 parameter
              {
+                char file_name [MAX_DIM_PAR];       // contain the file name
+               	
+               	if (num_string_readed == 2)         // correct number of parameter
+               	{
+                   	if (strlen(parameters[0]) > MAX_DIM_PAR)        // other dimension check of the parameters
+                   	{
+                       	cerr << err_dim_par;        // print error mex
+                   	}
+                   	else
+                   	{
+                       	sscanf(parameters[0], "%s", file_name);     // take file name
+       					
+       					send_delete_request(session_key, file_name);// checking the correctness of strings
+                   	}
+               	}
+               	else
+                   	cerr << err_wrong_num_par;      // return error mex
                 break;
              }
         case 6:    // help -> 0/1 parameter
