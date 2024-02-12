@@ -10,6 +10,7 @@
 #include <openssl/rand.h>
 #include <openssl/err.h>
 #include <iostream> 
+#include <fstream> 
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -18,12 +19,15 @@
 // ------------------------------- start: constant -------------------------------
 #define USERNAME_SIZE 20            // maximum length for users' usernames
 #define MAX_CLIENTS 20              // maximum number of clients connected to the server at the same time
-#define MAX_FILE_SIZE 4294967296    // maximum size of files that can be saved and received by the cloud server 4Gbi = 2^32 Bytes
-#define MAX_DIM_FILE_NAME 100       // maximum length for a file_names, a size of 100 each is more than sufficient for most legitimate cases.
 // -- define for messages format -- GCM mex format is -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
+// For further clarification on the maximum size of packages and file management in this project, SEE NOTE 0 at the end of the file or look at the documentation on github.
+#define MAX_FILE_SIZE 4294967296    // maximum size of files that can be saved and received by the cloud server 4GBi = 2^32 Bytes
+#define MAX_DIM_FILE_NAME 100       // maximum length for a file_names, a size of 100 each is more than sufficient for most legitimate cases.
+#define MAX_SIZE_F_OS 4294967496    // maximum length for a packet with a big file (oversize)
+#define FRAGMENT_SIZE 209715200     // maximum size of files that can be encrypted or decrypted in a single update step (for further clarification SEE NOTE 1 or documentation) 200MBi = 200*2^20 Bytes             
 // Messages exchanged normally do not contain large files but keys, certificates, signatures or text (they do not need large buffers to be handled)
 #define MAX_SIZE 102400             // the maximum length for normal message (100 KBi)
-#define MSG_MAX 10000
+#define MSG_MAX 102000
 #define NONCE_SIZE 4                // size of the nonce
 #define MSG_AAD_OFFSET 34           // offset of the AAD(usually only nonce) in the message format (AAD is after cmd_code,tag,IV,aad_len)
 #define MSG_AAD_LEN_OFFSET 30       // offset of the AAD_len in the message format (AAD_len is after cmd_code,tag,IV)
@@ -98,6 +102,7 @@ bool check_file_name(const string& str)
     
     // canonicalization
     // realpath() fucntion -> expands all symbolic links and resolves references to /./, /../ and extra '/' characters
+    // split a username/
     /*
     char* canon_str = realpath(str.c_str(), NULL);      // get the real path 
     if(!canon_str)          // error
@@ -148,15 +153,22 @@ void inc_counter_nonce(unsigned int &counter)
         - socket: socket
         - msg_size: size of the message to send
         - message: message to send
+        - ov_size: indicates if the package is to contain 'oversize' files, in which case the controls on the maximum possible size 
+                   must be different. By default the parameter is set to 0.
 */
-void send_msg(int socket, unsigned int msg_size, unsigned char* message)
+void send_msg(int socket, unsigned int msg_size, unsigned char* message, bool ov_size = false)
 {
 	int ret;
 	
 	// check for the size of the message to send
-	if( msg_size > MAX_SIZE)
+	if( !ov_size && ( msg_size > MAX_SIZE) )   // check with small mex
 	{
     	cerr<<"Error in send: message too big, will not be sent.\n";
+    	return;
+    }
+    if( ov_size && ( msg_size > MAX_SIZE_F_OS) )   // check with big mex
+    {
+        cerr<<"Error in send: message too big, will not be sent.\n";
     	return;
     }
     
@@ -176,10 +188,12 @@ void send_msg(int socket, unsigned int msg_size, unsigned char* message)
     Parameters:     
         - socket: socket
         - message: buffer for store the received message
+        - ov_size: indicates if the package is to contain 'oversize' files, in which case the controls on the maximum possible size 
+                   must be different. By default the parameter is set to 0.
     Return:
         - size of the received message
 */
-unsigned int receive_msg(int socket, unsigned char* message)
+unsigned int receive_msg(int socket, unsigned char* message, bool ov_size = false)
 {
 	int ret;
 	uint32_t networknumber;    // contain the size of the message to receive
@@ -191,11 +205,16 @@ unsigned int receive_msg(int socket, unsigned char* message)
 	if(ret > 0)                // successfully received the message size
 	{
 		unsigned int msg_size = ntohl(networknumber); // translate message size 
-		if(msg_size > MAX_SIZE)       // check if the message is too big
+		if(!ov_size && ( msg_size > MAX_SIZE))       // check if the message is too big, with small mex
 		{
     		cerr<<"Error in receive: message too big.\n"; 
     		return 0;                 // return 0
     	}	
+    	if( ov_size && ( msg_size > MAX_SIZE_F_OS) )   // check with big mex
+        {
+            cerr<<"Error in receive: message too big, will not be sent.\n";
+        	return 0;
+        }
     	// retrieve all received message
 		while(recieved < msg_size)
 		{
@@ -416,79 +435,151 @@ unsigned int dh_generate_session_key(unsigned char* shared_secret, unsigned int 
         - input_len: the size of the clear text in input
         - shared_key: the shared key for symmetric encryption (derived from ECDH between client and server)
         - output_buffer: buffer to contain the encrypted message in this format -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
+        - ov_size: indicates if the package is to contain 'oversize' files, in which case the controls on the maximum possible size 
+                   must be different. By default the parameter is set to 0.
+        - file_name: pointer to the file to be encrypted, it will be necessary to read at each update cycle from the file to the maximum fragment size
     Return:
         - int that rapresent: the total length of the message (success) or '-1' if encryption has failed
 */
-int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, unsigned char *output_buffer)
+int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, unsigned char *output_buffer, bool ov_size = false, FILE* file_name = 0)
 {
+	
+	//FILE* file_name;
     int ret;
     unsigned int cmd_code_size = sizeof(short);     // take size of cmd_code
-    // dimension check 1, checks if at least one of the two input buffers is larger than the maximum allowed size.
-    if (input_len > MAX_SIZE || aad_len > MAX_SIZE)
+    
+    cout << "+++++++++++ " << "Start encrypt, ov_size= " << ov_size << "\n";		// +++++++++++++++
+    
+    // 1) dimension check
+    // -- dimension check 1, checks if at least one of the two input buffers is larger than the maximum allowed size.
+    // ---- for small file
+    if ( !ov_size && (input_len > MAX_SIZE || aad_len > MAX_SIZE) )
     {
         cerr << "Error in GCM (AES_128) encryptor function: AAD or plaintext too big.\n";
         cerr << "AAD dimension is: " << aad_len << "B , plaintext dimension is: " << input_len << "B, max possible dimension is: " << MAX_SIZE << "B.\n";
         return -1;                  // failed return value
     }
-    // dimension check 2, checks if together the two input buffers are larger than the maximum space they can have available (maximum allowed size - the size of the other fields in the packet in the format of this application)
-    if(input_len + aad_len > MAX_SIZE - AE_block_size - sizeof(unsigned int) - AE_iv_len - AE_tag_len - cmd_code_size)
+    // ---- for large file
+    if ( ov_size && (input_len > MAX_SIZE_F_OS || aad_len > MAX_SIZE_F_OS) )
+    {
+        cerr << "Error in GCM (AES_128) encryptor function: AAD or plaintext too big.\n";
+        cerr << "AAD dimension is: " << aad_len << "B , plaintext dimension is: " << input_len << "B, max possible dimension is: " << MAX_SIZE_F_OS << "B.\n";
+        return -1;                  // failed return value
+    }
+    // -- dimension check 2, checks if together the two input buffers are larger than the maximum space they can have available (maximum allowed size - the size of the other fields in the packet in the format of this application)
+    // ---- for small file
+    if( !ov_size && (input_len + aad_len > MAX_SIZE - AE_block_size - sizeof(unsigned int) - AE_iv_len - AE_tag_len - cmd_code_size) )
     {
         cerr << "Error in GCM (AES_128) encryptor function: AAD or plaintext too big.\n";
         return -1;                  // failed return value
     }
+    // ---- for large file
+    if( ov_size && (input_len + aad_len > MAX_SIZE_F_OS - AE_block_size - sizeof(unsigned int) - AE_iv_len - AE_tag_len - cmd_code_size) )
+    {
+        cerr << "Error in GCM (AES_128) encryptor function: AAD or plaintext too big.\n";
+        return -1;                  // failed return value
+    }
+    
+    // 2) encrypt
+    // -- generate context, buffer and usefull variable
     EVP_CIPHER_CTX* ctx;               // create context for Authenticated Encryption
 	int len = 0;
 	int ciphertext_len = 0;            // contain the size of the ciphertext
 	
-    // generate IV
+    // -- generate IV
     unsigned char *iv = (unsigned char *)malloc(AE_iv_len);     // allocate buffer to IV
     if(!iv) 
         error("Error in GCM (AES_128) encryptor: IV malloc error.\n");
     RAND_poll();                                                // seed random generator
 	ret = RAND_bytes((unsigned char*)&iv[0], AE_iv_len);        // create random bytes for nonce
 	
-	unsigned char* ciphertext = (unsigned char *)malloc(input_len + AE_block_size);    // buffer to contain the ciphertext, maximum size is plaintext_size + block_size
-	if(!ciphertext) 
-    	error("Error in GCM (AES_128) encryptor: ciphertext malloc error.\n");
-	
 	unsigned char* tag = (unsigned char *)malloc(AE_tag_len);      // buffer to contain the TAG
 	if(!tag) 
     	error("Error in GCM (AES_128) encryptor: TAG malloc error.\n");
 	
-	unsigned char* complete_aad=(unsigned char*)malloc(sizeof(short) + cmd_code_size); // buffer to contain the complete AAD = ( cmd_code | nounce )
+	// -- buffer to contain the complete AAD = ( cmd_code | nounce )
+	unsigned char* complete_aad=(unsigned char*)malloc(sizeof(short) + cmd_code_size); 
 	if(!complete_aad) 
     	error("Error in GCM (AES_128) encryptor: AAD malloc error.\n");
 	memcpy(complete_aad, &cmd_code, cmd_code_size);            // copy in complete_aad the cmd_code
-	memcpy(complete_aad + cmd_code_size, aad, aad_len);    // copy in complete_aad the nonce
-	 
-    // Authenticated encryption
+	memcpy(complete_aad + cmd_code_size, aad, aad_len);        // copy in complete_aad the nonce
+	
+	// -- buffer for the ciphertext
+	unsigned char* ciphertext;
+	cout << "+++++++++++ " << "input len: " << input_len << " fragment_size: " << FRAGMENT_SIZE << "\n";		// +++++++++++++++
+	if ( input_len <= FRAGMENT_SIZE )
+    	ciphertext = (unsigned char *)malloc(input_len + AE_block_size);    // buffer to contain the ciphertext, maximum size is plaintext_size + block_size
+	else
+    	ciphertext = (unsigned char *)malloc(FRAGMENT_SIZE + AE_block_size);// buffer to contain the ciphertext, maximum size is plaintext_size + block_size
+	if(!ciphertext) 
+    	error("Error in GCM (AES_128) encryptor: ciphertext malloc error.\n");
+	
+    // -- Authenticated encryption
     if(!(ctx = EVP_CIPHER_CTX_new()))       // context allocation
         handleErrors();
 
 	if(1 != EVP_EncryptInit(ctx, AE_cipher, shared_key, iv))   // Initialise the encryption operation.
     	handleErrors();
 	
-	// provide any AAD data. This can be called zero or more times as required
+	// -- update: provide any AAD data. This can be called zero or more times as required
 	if(1 != EVP_EncryptUpdate(ctx, NULL, &len, complete_aad, aad_len + cmd_code_size))
     	handleErrors();
-    // provide the message to be encrypted, and obtain the ciphertext output.
-	if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, input_buffer, input_len))
-    	handleErrors();
-	ciphertext_len = len;          // update ciphertext len
-	
-	
-	if(1 != EVP_EncryptFinal(ctx, ciphertext + ciphertext_len, &len))  // finalize Encryption
-    	handleErrors();
-	ciphertext_len += len;         // update ciphertext len
-	
+    
+    // -- start update cycles: one cycle if input size is less than FRAGMENT_SIZE, more cycles if input size is bigger than FRAGMENT_SIZE
+    if ( input_len <= FRAGMENT_SIZE )   // only one cicle
+    {
+    	cout << "+++++++++++ " << "Encrypt in 1 cycle: " << "\n";		// +++++++++++++++
+        // -- update : provide the message to be encrypted, and obtain the ciphertext output.
+    	if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, input_buffer, input_len))
+        	handleErrors();
+    	ciphertext_len = len;          // update ciphertext len
+    	
+    	// -- final
+    	if(1 != EVP_EncryptFinal(ctx, ciphertext + ciphertext_len, &len))  // finalize Encryption
+        	handleErrors();
+    	ciphertext_len += len;         // update ciphertext len
+    }
+    else        // more cicle
+    {
+    	cout << "+++++++++++ " << "Encrypt in 1 cycle: " << "\n";		// +++++++++++++++
+        // -- set utilities
+        // the offset to the beginning of the cipher text in the output buffer
+        unsigned int msg_header = AE_tag_len + AE_iv_len + aad_len + sizeof(unsigned int) + cmd_code_size;   
+        unsigned char* inbuf =(unsigned char*)malloc(FRAGMENT_SIZE);
+     
+        int inlen;              // how was read from the file in the current cycle
+		
+        // -- encrypt cycle
+        for (;;) 
+        {
+            inlen = fread(inbuf, 1, FRAGMENT_SIZE, file_name);     // read from file max FRAGMENT_SIZE Bytes
+            
+            if (inlen <= 0)         // check if th end of the file
+                break;
+            
+            if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, inbuf, inlen))     // encrypt update
+                handleErrors();             // error
+            ciphertext_len += len;         // update ciphertext len
+            
+            // write encrypt part into output_buffer
+            memcpy(output_buffer + msg_header + ciphertext_len, ciphertext, len);
+        }
+        
+        // -- final
+        if (1 != EVP_EncryptFinal(ctx, output_buffer + len, &len))  
+            handleErrors();                 // error
+        ciphertext_len += len;         // update ciphertext len
+    }
+    
 	// get the TAG and put it in tag buffer
 	if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, AE_tag_len, tag))
     	handleErrors();
 	
+	// 3) write the packet with the ciphertext in the output_buffer
 	unsigned int output_len = AE_tag_len + ciphertext_len + AE_iv_len + aad_len + sizeof(unsigned int) + cmd_code_size;   // len of the message
-	unsigned int written = 0;
+	unsigned int written = 0;  // counter of written Byte
 	
-	// copy in the output buffer, in the format -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
+	// copy in the output_buffer, in the format -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
 	// -- write cmd_code in output buffer
 	memcpy(output_buffer, (unsigned char *)&cmd_code, cmd_code_size);      
 	written += cmd_code_size;    
@@ -504,8 +595,10 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
 	// -- write the nonce in output buffer
 	memcpy(output_buffer + written, aad, aad_len);
 	written += aad_len;                      // update written offset
+	
 	// -- write the ciphertext in output buffer
-	memcpy(output_buffer + written, ciphertext, ciphertext_len);
+	if(input_len <= FRAGMENT_SIZE)             // made a single encryption cycle, the encrypted message must be copied.
+    	memcpy(output_buffer + written, ciphertext, ciphertext_len);
 	written += ciphertext_len;                 // update written offset
 	
 	// free all 
@@ -528,32 +621,48 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
         - output_aad: buffer in which to insert the received aad (in addition to cmd_code, it is usually the nonce that is counter to ensure the freshness of the message)
         - aad_len: the size of the output_aad
         - output_buffer: buffer to contain the decrypted message
+        - ov_size: indicates if the package is to contain 'oversize' files, in which case the controls on the maximum possible size 
+                   must be different. By default the parameter is set to 0.
+        - file_name: pointer to the file, it will be necessary to write at each update cycle to the file (maximum fragment size)
     Return:
         - int that rapresent: the length of the output_buffer containing the decrypted message or '-1' if decryption has failed
 */
-int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, short &cmd_code, unsigned char* output_aad, unsigned int &aad_len, unsigned char* output_buffer)
+int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, short &cmd_code, unsigned char* output_aad, unsigned int &aad_len, unsigned char* output_buffer, bool ov_size = false, FILE* file_name = 0)
 {
     int ret;
     unsigned int cmd_code_size = sizeof(short);     // take size of cmd_code
-    // dimension check 1, checks if input buffer is larger than the maximum allowed size.
-    if (input_len > MAX_SIZE)
+    
+    // 1) dimension check
+    // -- dimension check 1, checks if input buffer is larger than the maximum allowed size.
+    // ---- for small file
+    if ( !ov_size && (input_len > MAX_SIZE) )
     {
         cerr << "Error in GCM (AES_128) decryptor function: packet too big.\n";
         cerr << "Packet dimension is: " << input_len << "B, max possible dimension is: " << MAX_SIZE << "B.\n";
         return -1;                  // failed return value
     }
-    // dimension check 2, checks if the message is smaller than the minimum size for a well formatted mex
+    // ---- for large file
+    if ( ov_size && (input_len > MAX_SIZE_F_OS) )
+    {
+        cerr << "Error in GCM (AES_128) decryptor function: packet too big.\n";
+        cerr << "Packet dimension is: " << input_len << "B, max possible dimension is: " << MAX_SIZE_F_OS << "B.\n";
+        return -1;                  // failed return value
+    }
+    // -- dimension check 2, checks if the message is smaller than the minimum size for a well formatted mex
     if(input_len <= AE_iv_len + AE_tag_len + cmd_code_size)
     {
         cerr << "Error in GCM (AES_128) decryptor function: malformed or empty message.\n";
         return -1;                  // failed return value
     }
     
-    EVP_CIPHER_CTX *ctx;        // create context for Authenticated Decryption
+    // 2) decrypt
+    // -- generate context, buffer and usefull variable
+    EVP_CIPHER_CTX *ctx;                // create context for Authenticated Decryption
 	unsigned int read = 0;
 	unsigned int output_len = 0;
 	int len;
-	// generate IV
+	
+	// -- generate IV
     unsigned char *iv = (unsigned char *)malloc(AE_iv_len);     // allocate buffer to IV
     if(!iv) 
         error("Error in GCM (AES_128) decryptor: IV malloc error.\n");
@@ -592,22 +701,40 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
 	unsigned char* complete_aad=(unsigned char*)malloc(aad_len + cmd_code_size); // buffer to contain the complete AAD = ( cmd_code | nounce )
 	if(!complete_aad) 
     	error("Error in GCM (AES_128) decryptor: AAD malloc error.\n");
-	memcpy(complete_aad, &cmd_code,cmd_code_size);                    // copy cmd_code
+	memcpy(complete_aad, &cmd_code,cmd_code_size);             // copy cmd_code
 	memcpy(complete_aad + cmd_code_size, output_aad, aad_len); // copy aad
+
 	// -- read ciphertext
 	unsigned int ciphertext_len = input_len - read;            // take ciphertext len
 	// dimension check 5
-	if(ciphertext_len > MSG_MAX) 
+	// -- small file
+	if(!ov_size && (ciphertext_len > MSG_MAX))
 	{
     	cerr << "Error in GCM (AES_128) decryptor function: ciphertext too big.\n";
         return -1; 
 	}
-	unsigned char* ciphertext = (unsigned char *)malloc(ciphertext_len);   // allocate buffer to ciphertext
+	// -- big file
+	if(ov_size && (input_len > MAX_SIZE_F_OS))
+	{
+    	cerr << "Error in GCM (AES_128) decryptor function: ciphertext too big.\n";
+        return -1; 
+	}
+	
+	// -- buffer for the ciphertext
+	unsigned char* ciphertext;
+	if ( input_len <= FRAGMENT_SIZE )      // small file
+    	ciphertext = (unsigned char *)malloc(ciphertext_len);   // buffer to contain the ciphertext, maximum size is plaintext_size + block_size
+	else                                   // big file
+    	ciphertext = (unsigned char *)malloc(FRAGMENT_SIZE);    // buffer to contain the ciphertext, maximum size is plaintext_size + block_size
 	if(!ciphertext)
     	error("Error in GCM (AES_128) decryptor: ciphertext Malloc Error.\n");
-	memcpy(ciphertext, input_buffer + read, ciphertext_len);
+    
+    if ( input_len <= FRAGMENT_SIZE )       // small file
+    	memcpy(ciphertext, input_buffer + read, ciphertext_len);   // copy all ciphertext in the buffer, decryption in 1 cycle
+	else                                    // big file
+    	memcpy(ciphertext, input_buffer + read, FRAGMENT_SIZE);    // copy the fist FRAGMENT_SIZE Bytes of the ciphertext in the buffer, decryption in more cycle
 	
-	// Authenticated decryption
+	// -- Authenticated decryption
     if(!(ctx = EVP_CIPHER_CTX_new()))       // context allocation
         handleErrors();
 
@@ -617,18 +744,67 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
 	//Provide any AAD data.
 	if(1 != EVP_DecryptUpdate(ctx, NULL, &len, complete_aad, aad_len + cmd_code_size))
     	handleErrors();
-    // provide the message to be decrypted, and obtain the plaintext output.
-	if(1 != EVP_DecryptUpdate(ctx, output_buffer, &len, ciphertext, ciphertext_len))
-    	handleErrors();
-	output_len = len;              // update output_len len
-	
-	// Set expected tag value. Works in OpenSSL 1.0.1d and later
-	if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, AE_tag_len, tag))
-    	handleErrors();
-	
-	// Finalise the decryption. A positive return value indicates success, anything else is a failure - the plaintext is not trustworthy.
-	ret = EVP_DecryptFinal(ctx, output_buffer + output_len, &len);
-	
+    	
+    // -- start update cycles: one cycle if input size is less than FRAGMENT_SIZE, more cycles if input size is bigger than FRAGMENT_SIZE
+    if ( input_len <= FRAGMENT_SIZE )   // only one cicle
+    {
+        // -- update : provide the message to be decrypted, and obtain the plaintext output.
+    	if(1 != EVP_DecryptUpdate(ctx, output_buffer, &len, ciphertext, ciphertext_len))
+        	handleErrors();
+    	output_len = len;              // update output_len len
+    	
+    	// Set expected tag value. Works in OpenSSL 1.0.1d and later
+    	if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, AE_tag_len, tag))
+        	handleErrors();
+    	
+    	// Finalise the decryption. A positive return value indicates success, anything else is a failure - the plaintext is not trustworthy.
+    	ret = EVP_DecryptFinal(ctx, output_buffer + output_len, &len);
+    }
+    else        // more cicle, does not write the decrypted fragments into a buffer in memory but directly into the file passed as a parameter.
+    {
+        // -- set utilities  
+        unsigned char out_buf[FRAGMENT_SIZE + AE_block_size];   // buffer to contain the fragment of cleartext
+        unsigned int to_read = ciphertext_len - FRAGMENT_SIZE;  // how many bytes are missing to complete the decryption
+        unsigned int curr_ciphert_len = FRAGMENT_SIZE;          // size of the current fragment to be decrypted
+
+        // -- decrypt cycle
+        for (;;) 
+        {
+            if (1 != EVP_DecryptUpdate(ctx, out_buf, &len, ciphertext, curr_ciphert_len))     // encrypt update
+                handleErrors();             // error
+            output_len += len;         // update ciphertext len
+            
+            // write decrypt part into file
+            fwrite(out_buf, 1, len, file_name);
+            
+            if (to_read == 0)         // check if th end of the file
+            {
+                break;
+            }
+            // update to_read
+            if (to_read >= FRAGMENT_SIZE)   // next cycle will not be the last
+            {
+                to_read -= FRAGMENT_SIZE;       // update
+                memcpy(ciphertext, input_buffer + read + output_len, FRAGMENT_SIZE);    // copy for next cycle
+            }
+            else                            // next cycle will be the last
+            {
+                curr_ciphert_len = to_read;     // update current diphertext len
+                memcpy(ciphertext, input_buffer + read + output_len, to_read);    // copy for next cycle
+                to_read = 0;                     // set to 0 to_read
+            }
+        }
+        
+        // Set expected tag value. Works in OpenSSL 1.0.1d and later
+    	if(!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, AE_tag_len, tag))
+        	handleErrors();
+    	
+    	// Finalise the decryption. A positive return value indicates success, anything else is a failure - the plaintext is not trustworthy.
+    	ret = EVP_DecryptFinal(ctx, out_buf, &len);
+    	// write decrypt part into file
+        fwrite(out_buf, 1, len, file_name);
+    }
+    	
 	// free all 
 	EVP_CIPHER_CTX_free(ctx);  // free context
 	free(tag);                 // free TAG buffer
@@ -648,3 +824,19 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
 	}
 }
 // ------------------------------- end: functions for encryption and decryption with GCM with AES_128  -------------------------------
+
+/*
+    NOTE 0:
+        In the protocol thought most packets are small, the cipher text that is exchanged is always represented by a small string 
+        (it may contain username, message to report an error, server questions for the user, etc.). For this reason, most messages 
+        can be allocated in buffers of a standard size (200 KBi), and checks are made on the maximum size to prevent too large 
+        transmission (which would be due to an application malfunction or a malicious thrust).
+        The only case in which transmissions can be larger is during downloading and uploading files (which can be up to 4GBi in size).
+    NOTE 1:
+         In cases of downloading and uploading files larger than the maximum size of the standard packet, the maximum size of the 
+         'oversize' packet (packet in which there is a large file) must be adopted. In this case, encryption and decryption cannot be 
+         done on the entire file at once, as this would occupy a lot of memory. For this reason, a constant (FRAGMENT_SIZE) is defined 
+         which sets the maximum size of a fragment for encryption and decryption; if the file exceeds this size, it will be divided 
+         into fragments of this maximum size and passed to the encryption or decryption update each time. 
+         Then the entire encrypted file will be sent in the packet.
+*/

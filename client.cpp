@@ -1135,6 +1135,23 @@ void open_server_connection(char* ip_server, int server_port)
         error("Errore nella \"connect()\":");                  // connection error
 }
 
+// only for test ourpose
+int pass_cb(char *buf, int size, int rwflag, void *u)
+{
+	int len;
+
+    /* get pass phrase, length 'len' into 'tmp' */
+    char tmp[] = "!UserA_Psw!";
+    len = strlen(tmp);
+
+    if (len <= 0) 
+    	return 0;
+    if (len > size) 
+    	len = size;
+    memcpy(buf, tmp, len);
+   	return len;
+}
+
 /*
     Description:  
         function which checks the correctness of the username passed as a parameter
@@ -1160,7 +1177,8 @@ EVP_PKEY* check_username(char* username, char* username_buffer , int buffer_len)
 	if(!file)                                              
 	    error("User does not have a key file. The user is not signed or the username isn't correct.\n");
 
-	user_key = PEM_read_PrivateKey(file, NULL, NULL, NULL);    // read the privk
+	//user_key = PEM_read_PrivateKey(file, NULL, NULL, NULL);    // read the privk
+	user_key = PEM_read_PrivateKey(file, NULL, pass_cb, NULL);    // read the privk
 	if(!user_key) 
     	error("user_key Error\n");
 	fclose(file);                                              // close the file containing the privk

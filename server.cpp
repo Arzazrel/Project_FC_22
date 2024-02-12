@@ -72,6 +72,23 @@ string serv_privk_path = keys_path + "s_privk.pem";         // path to server pr
 
 // ------------------------------- start: general function -------------------------------
 
+// only for test ourpose
+int pass_cb(char *buf, int size, int rwflag, void *u)
+{
+	int len;
+
+    /* get pass phrase, length 'len' into 'tmp' */
+    char tmp[] = "!Server_Psw!";
+    len = strlen(tmp);
+
+    if (len <= 0) 
+    	return 0;
+    if (len > size) 
+    	len = size;
+    memcpy(buf, tmp, len);
+   	return len;
+}
+
 //    Description:    function to retrieve the server certificate
 X509* get_server_certificate()
 {
@@ -98,7 +115,8 @@ EVP_PKEY* get_server_private_key()
 	if(!s_key_file) 
     	error("Error in opening the server private key pem file.\n");
 	
-	s_privk = PEM_read_PrivateKey(s_key_file, NULL, NULL, NULL);    // read server private key
+	//s_privk = PEM_read_PrivateKey(s_key_file, NULL, NULL, NULL);    // read server private key
+	s_privk = PEM_read_PrivateKey(s_key_file, NULL, pass_cb, NULL);    // read server private key
 	if(!s_privk) 
     	error("Error in PEM_read_PrivateKey returned NULL.\n");
 	fclose(s_key_file);                                             // close server private key file
