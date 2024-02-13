@@ -76,6 +76,7 @@ string err_dim_par = "Error in the dimension of parameters passed.\n";          
 
 string rename_failed = "Error: rename operation failed.\n";                     // error that occurs when the rename operation failed
 string delete_failed = "Error: delete operation failed.\n";                     // error that occurs when the delete operation failed
+string upload_failed = "Error: delete operation failed.\n";                     // error that occurs when the upload operation failed
 
 // ------------------------------- end: messages -------------------------------
 
@@ -464,7 +465,7 @@ void send_delete_request(unsigned char* session_key, char* file_name)
     	}
         
         // free message and reallocate with a different dimension
-        free(message);     // free the buffer containing the cleartext message (user file list)
+        free(message);     // free the buffer containing the cleartext message (file_name)
        	message = (unsigned char*)malloc(MAX_SIZE);
        	if(!message)
              	error("Error in send_delete_request: message Malloc error.\n");
@@ -605,6 +606,301 @@ void send_delete_request(unsigned char* session_key, char* file_name)
     else        // else of the control of file name
         cerr << delete_failed;
 }
+
+/*
+    Description:  
+        function to send the upload request for a file stored on the client
+    Parameters:
+        - session_key: buffer to contain the symmetric session key
+        - old_file_name: file name of the file  to be deleted
+        - username: username of the user that uses the client
+*/
+void send_upload_request(unsigned char* session_key, char* file_name, char* username)
+{
+    unsigned char* message = 0;     // contain the message to be sent
+    unsigned int msg_len = 0;       // the len of the message to encrypt
+    short cmd_code = 2;             // code of the command
+	unsigned int aad_len;           // len of AAD
+    int ret;
+    string f_n = file_name;    		// string for file name
+    string path;                    // string for complete path of the specified file
+    unsigned long file_size = 0;	// contain the size of the file to be uploaded
+    FILE* file_up;				    // file to be uploaded
+    bool ov_size = false;           // in case of big size to upload
+    
+    // check the dimension fo a string
+    if (strlen(file_name) > MAX_DIM_PAR)
+    {
+        cerr << "File name too big.\n";
+        return;     
+    }
+    
+    string temp_f_n = file_name;   // string to contain the file name
+    
+    // checking the correctness of strings
+    if ( check_file_name(temp_f_n) )
+    {
+    	// 0) control check of the file to be uploaded on the server
+    	// -- check if the file exist
+        path = ded_store_path + username + "/" + f_n;	// take the path
+        if(access(path.c_str(), F_OK ) != 0)         // if exist return 0 otherwhise return -1
+        {
+        	cerr << "The specified file" << path << " is not present, upload finished before sending the request to the server.\n";
+        	return;		// return to main loop
+        }
+        // -- check file dimension
+		file_up = fopen (path.c_str(),"rb");		// open the file
+  		if (!file) 				
+  			error ("Error in send_upload_request: opening file failed.\n");
+  		else                    // file successfully opened
+  		{
+    		fseek (file_up, 0, SEEK_END); 			// go to the end of the file
+    		file_size = ftell (file_up);			// get size in bytes	
+    		fclose (file_up);						// close the file
+    		cout << "Size of " << path << "is " << file_size << "Bytes.\n";   // print the files 
+    		if ( file_size > MAX_FILE_SIZE )
+        	{
+            	cerr << upload_failed << "File too big.\n";
+            	return;        // return to main loop
+        	}
+    	}
+    	// all control passed, this first message is alway small, only have to send the name of the file to have the server do the checks. 
+    	// The subsequent message (sending the file) may have to be handled differently if the file is large.
+    	
+    	// 1) create and send the request to the server -> format is -> ( cmd_code | tag | IV | aad_len | nonce | file_name )
+    	// -- set the message to ecnrypt
+    	msg_len = strlen(file_name) + 1;			   // update msg_len
+    	message = (unsigned char*)malloc(sizeof(unsigned long) + msg_len);     // allocate       
+    	if(!message)
+          	error("Error in send_delete_request: message Malloc error.\n");
+        memcpy(message, (unsigned char*)&file_size, sizeof(unsigned long));           // copy the file size in message
+    	memcpy(message + sizeof(unsigned long), file_name, msg_len);           // copy the file name in message
+    	
+    	// -- set aad (client nonce)
+    	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
+    	if(!aad)
+        	error("Error in send_delete_request: aad Malloc error.\n");
+    	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
+    	
+    	// -- buffer 
+    	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+    	if(!buffer)
+        	error("Error in send_delete_request: buffer Malloc error.\n");
+    	
+    	// -- encrypt the message, cmd_code for the list operation is 2
+    	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
+    	if (ret >= 0)      // successfully encrypted
+    	{
+        	// send the list request to the server
+    		send_msg(socket_server, ret, buffer);     // send user file list to client
+    		inc_counter_nonce(client_counter);        // update client counter
+    	}
+    	
+    	// free message and reallocate with a different dimension
+        free(message);     // free the buffer containing the cleartext message (file_name)
+       	message = (unsigned char*)malloc(MAX_SIZE);
+       	if(!message)
+             	error("Error in send_delete_request: message Malloc error.\n");
+    	
+    	// 2) receive mex from the server
+    	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
+    	unsigned int received_counter =*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+    	
+    	// start: if for nonce check of the first message received from server 
+    	if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+    	{
+    		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+    		inc_counter_nonce(server_counter);    // increment the server nonce
+    		
+    		if (ret >= 0)                         // correctly decrypted 
+    		{     // end: if for decryptor ret check of the first message received from server 
+        		// check the cmd_code received
+        		if ((cmd_code != -1) && (cmd_code == 2))  // all is ok
+        		{
+            		memcpy(message + ret - 1, "\0", 1);   // for secure
+                	cout << message;                      // print the message
+        		}
+        		else if (cmd_code == -1)                  // error message
+        		{
+        			memcpy(message + ret - 1, "\0", 1);   // for secure
+                	cerr << message;                      // print the error message
+                	return;            // delete operation failed
+        		}
+        		else
+        		{
+        			cerr << err_rec_cmd_code;             // error message
+            		return;            // delete operation failed
+        		}        		
+    		}      // end: if for decryptor ret check of the first message received from server 
+    		else
+        	{      // start: else for decryptor ret check of the first message received from server 
+            	cerr << "Error in send_delete_request: decrypt error.\n";
+            	ceer << upload_failed;
+            	return;    // return to manin loop
+        	}      // end: else for decryptor ret check of the first message received from server 
+
+            // free message and reallocate with a different dimension
+            free(message);     // free the buffer containing the cleartext message (user file list)
+            free(buffer);      // free buffer containing the encrypted message
+            free(aad);         // free aad 8in this case the server nonce	
+            
+            // 3) send the file to be uploaded to the server
+            // -- set aad (client nonce). It does not change depending on the size of the file.
+        	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
+        	if(!aad)
+            	error("Error in send_delete_request: aad Malloc error.\n");
+        	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
+        	
+        	// -- buffer: will contain the whole packet to be sent, it's size depends on file size
+        	// -- message: it's the buffer to contain the cleartext to encrypt. If the file is too big for only 1 encrypt cycle the cleartext
+        	// will be read directly from the file on disk to save memory and not have to allocate another buffer as large as the file.
+        	//  - must be buffer, - message can be avoided
+        	
+        	// -- check if is a small file or a oversize file -- start: if (big file)
+        	if (file_size + sizeof(unsigned int) > MAX_SIZE - AE_block_size - sizeof(unsigned int) - AE_iv_len - AE_tag_len - sizeof(short))
+        	{
+            	// large file (oversize), 
+            	ov_size = true;                // set ov_size
+            	
+            	// buffer will be very large
+            	buffer = (unsigned char*)malloc(file_size + sizeof(unsigned int)*2 + AE_block_size + AE_iv_len + AE_tag_len + sizeof(short) + 16);      // temp buffer for message 
+            	if(!buffer)
+                	error("Error in send_upload_request: buffer Malloc error.\n");
+                	
+                // check the size of the file to understand whether the encryption will be done in one loop (you have to put the contents of the file in message) 
+                // or in several loops (message will not be used and will be read directly from the file)
+                if ( (file_size + AE_block_size) <= FRAGMENT_SIZE )
+                {
+                    // -- one cycle -- set the message to ecnrypt
+                    message = (unsigned char*)malloc(file_size);     // allocate       
+                	if(!message)
+                      	error("Error in send_delete_request: message Malloc error.\n");
+                     
+                    file_up = fopen (path.c_str(),"rb");		// open the file
+              		if (!file) 				
+              			error ("Error in send_upload_request: opening file failed.\n"); 	
+                     
+                    // read from the file and put into message buffer
+                    ret = fread(message, 1, file_size, file_up);
+                    if(ret < file_size) 
+                    {
+                        cerr << "Error while reading file '" << file_name << "'\n"; 
+                        fclose(file_up);
+                        return;                 //return to main loop
+                    }
+                    fclose(file_up);
+                }
+                else    // more cycle
+                {
+                    // message buffer will not be used
+                    message = (unsigned char*)malloc(1);     // allocate       
+                	if(!message)
+                      	error("Error in send_delete_request: message Malloc error.\n");
+                      	
+                    file_up = fopen (path.c_str(),"rb");		// open the file
+              		if (!file) 				
+              			error ("Error in send_upload_request: opening file failed.\n"); 
+                }                
+        	}      //  end: if (big file)
+        	else           // small file -- start: else (small file)
+        	{
+            	// -- buffer: all in one cycle and with small buffer
+            	buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+            	if(!buffer)
+                	error("Error in send_upload_request: buffer Malloc error.\n");
+                
+                // -- set the message to ecnrypt
+                message = (unsigned char*)malloc(MAX_SIZE);     // allocate       
+            	if(!message)
+                  	error("Error in send_delete_request: message Malloc error.\n");
+                  	
+                file_up = fopen (path.c_str(),"rb");		// open the file
+          		if (!file) 				
+          			error ("Error in send_upload_request: opening file failed.\n");
+                  	
+                // read from the file and put into message buffer
+                ret = fread(message, 1, file_size, file_up);
+                if(ret < file_size) 
+                {
+                    cerr << "Error while reading file '" << file_name << "'\n"; 
+                    fclose(file_up);
+                    return;                 //return to main loop
+                }
+                fclose(file_up);
+        	}      // -- end: else (small file)
+        	
+        	// -- encrypt the message, cmd_code for the list operation is 2. In this call are specified also ov_size and file descriptor 
+        	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer, ov_size, file_up);
+        	if ( (file_size + AE_block_size) > FRAGMENT_SIZE )
+            	fclose (file_up);						// close the file
+        	if (ret >= 0)      // successfully encrypted
+        	{
+            	// send the list request to the server
+        		send_msg(socket_server, ret, buffer);     // send user file list to client
+        		inc_counter_nonce(client_counter);        // update client counter
+        	}
+        	
+        	// free message and buffer and reallocate with a different dimension
+            free(message);     // free the buffer containing the cleartext message (user file list)
+        	message = (unsigned char*)malloc(MAX_SIZE);
+        	if(!message)
+              	error("Error in send_upload_request: message Malloc error.\n");
+              	
+            // VERY IMPORTANT free buffer, it can be very large
+        	free(buffer);      // free buffer containing the encrypted message
+        	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+        	if(!buffer)
+            	error("Error in send_delete_request: buffer Malloc error.\n");
+              	
+            // 4) receive response from the server
+            msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
+         	unsigned int received_counter =*(unsigned int*)(buffer + MSG_AAD_OFFSET);   //take the received server nonce
+             
+            if(received_counter == server_counter)    // if is equal is correct otherwhise the message is not fresh
+        	{
+        		ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message);  // decrypt the received message
+        		inc_counter_nonce(server_counter);    // increment the server nonce
+        		
+        		if (ret >= 0)                         // correctly decrypted 
+        		{
+            		// check the cmd_code received
+            		if ((cmd_code != -1) && (cmd_code == 2))  // all is ok
+            		{
+                		memcpy(message + ret - 1, "\0", 1);   // for secure
+                    	cout << message;                      // print the message
+            		}
+            		else if (cmd_code == -1)                  // error message
+            		{
+            			memcpy(message + ret - 1, "\0", 1);   // for secure
+                    	cerr << message;                      // print the error message
+                    	return;            // delete operation failed
+            		}
+            		else
+                		cerr << err_rec_cmd_code;             // error message
+                		return;            // upload operation failed
+        		}
+        		else
+            	{
+                	cerr << "Error in send_delete_request: decrypt error.\n";
+            	}
+        	}
+        	else           // else of the first control of nonce
+            	cerr << err_rec_nonce;	
+            	
+            // free all
+            free(message);     // free the buffer containing the cleartext message (user file list)
+        	free(buffer);      // free buffer containing the encrypted message
+        	free(aad);         // free aad in this case the server nonce	
+        	
+        }       // end: if for nonce check of the first message received from server 
+        else    // start: else for nonce check of the first message received from server 
+            cerr << err_rec_nonce;
+                // end: else for nonce check of the first message received from server 
+    }
+    else        // else of the control of file name
+        cerr << delete_failed;
+}
+
 // ------------------------------- end: functions to perform user commands -------------------------------
 
 // ------------------------------- start: functions to manage user entering of commands -------------------------------
@@ -722,7 +1018,24 @@ void read_command(char* username, unsigned char* session_key)
              }
         case 2:    // upload -> 1 parameter
              {
-                 break;
+             	 char file_name [MAX_DIM_PAR];       // contain the file name
+               	
+               	 if (num_string_readed == 2)         // correct number of parameter
+               	 {
+                 	if (strlen(parameters[0]) > MAX_DIM_PAR)        // other dimension check of the parameters
+                   	{
+                       	cerr << err_dim_par;        // print error mex
+                   	}
+                   	else
+                   	{
+                       	sscanf(parameters[0], "%s", file_name);     // take file name
+       					
+       					send_upload_request(session_key, file_name, username);	// start the upload operation
+                   	}
+               	}
+               	else
+                   	cerr << err_wrong_num_par;      // return error mex
+                break;
              }
         case 3:    // download -> 1 parameter
              {
@@ -765,7 +1078,7 @@ void read_command(char* username, unsigned char* session_key)
                    	{
                        	sscanf(parameters[0], "%s", file_name);     // take file name
        					
-       					send_delete_request(session_key, file_name);// checking the correctness of strings
+       					send_delete_request(session_key, file_name);// send delete request
                    	}
                	}
                	else

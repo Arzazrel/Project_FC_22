@@ -156,7 +156,7 @@ void inc_counter_nonce(unsigned int &counter)
         - ov_size: indicates if the package is to contain 'oversize' files, in which case the controls on the maximum possible size 
                    must be different. By default the parameter is set to 0.
 */
-void send_msg(int socket, unsigned int msg_size, unsigned char* message, bool ov_size = false)
+void send_msg(int socket, unsigned long msg_size, unsigned char* message, bool ov_size = false)
 {
 	int ret;
 	
@@ -193,11 +193,11 @@ void send_msg(int socket, unsigned int msg_size, unsigned char* message, bool ov
     Return:
         - size of the received message
 */
-unsigned int receive_msg(int socket, unsigned char* message, bool ov_size = false)
+unsigned long receive_msg(int socket, unsigned char* message, bool ov_size = false)
 {
 	int ret;
 	uint32_t networknumber;    // contain the size of the message to receive
-	unsigned int recieved = 0; // how much I received
+	unsigned long recieved = 0; // how much I received
 
 	ret = recv(socket, &networknumber, sizeof(uint32_t), 0);
 	if(ret < 0)
@@ -507,7 +507,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
 	// -- buffer for the ciphertext
 	unsigned char* ciphertext;
 	cout << "+++++++++++ " << "input len: " << input_len << " fragment_size: " << FRAGMENT_SIZE << "\n";		// +++++++++++++++
-	if ( input_len <= FRAGMENT_SIZE )
+	if ( (input_len + AE_block_size) <= FRAGMENT_SIZE )
     	ciphertext = (unsigned char *)malloc(input_len + AE_block_size);    // buffer to contain the ciphertext, maximum size is plaintext_size + block_size
 	else
     	ciphertext = (unsigned char *)malloc(FRAGMENT_SIZE + AE_block_size);// buffer to contain the ciphertext, maximum size is plaintext_size + block_size
@@ -526,7 +526,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
     	handleErrors();
     
     // -- start update cycles: one cycle if input size is less than FRAGMENT_SIZE, more cycles if input size is bigger than FRAGMENT_SIZE
-    if ( input_len <= FRAGMENT_SIZE )   // only one cicle
+    if ( (input_len + AE_block_size) <= FRAGMENT_SIZE )   // only one cicle
     {
     	cout << "+++++++++++ " << "Encrypt in 1 cycle: " << "\n";		// +++++++++++++++
         // -- update : provide the message to be encrypted, and obtain the ciphertext output.
@@ -627,7 +627,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
     Return:
         - int that rapresent: the length of the output_buffer containing the decrypted message or '-1' if decryption has failed
 */
-int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, short &cmd_code, unsigned char* output_aad, unsigned int &aad_len, unsigned char* output_buffer, bool ov_size = false, FILE* file_name = 0)
+int decryptor(unsigned char* input_buffer, unsigned long input_len, unsigned char* shared_key, short &cmd_code, unsigned char* output_aad, unsigned int &aad_len, unsigned char* output_buffer, bool ov_size = false, FILE* file_name = 0)
 {
     int ret;
     unsigned int cmd_code_size = sizeof(short);     // take size of cmd_code
@@ -658,8 +658,8 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
     // 2) decrypt
     // -- generate context, buffer and usefull variable
     EVP_CIPHER_CTX *ctx;                // create context for Authenticated Decryption
-	unsigned int read = 0;
-	unsigned int output_len = 0;
+	unsigned long read = 0;
+	unsigned long output_len = 0;
 	int len;
 	
 	// -- generate IV
@@ -705,7 +705,7 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
 	memcpy(complete_aad + cmd_code_size, output_aad, aad_len); // copy aad
 
 	// -- read ciphertext
-	unsigned int ciphertext_len = input_len - read;            // take ciphertext len
+	unsigned long ciphertext_len = input_len - read;            // take ciphertext len
 	// dimension check 5
 	// -- small file
 	if(!ov_size && (ciphertext_len > MSG_MAX))
@@ -764,8 +764,8 @@ int decryptor(unsigned char* input_buffer, unsigned int input_len, unsigned char
     {
         // -- set utilities  
         unsigned char out_buf[FRAGMENT_SIZE + AE_block_size];   // buffer to contain the fragment of cleartext
-        unsigned int to_read = ciphertext_len - FRAGMENT_SIZE;  // how many bytes are missing to complete the decryption
-        unsigned int curr_ciphert_len = FRAGMENT_SIZE;          // size of the current fragment to be decrypted
+        unsigned long to_read = ciphertext_len - FRAGMENT_SIZE;  // how many bytes are missing to complete the decryption
+        unsigned long curr_ciphert_len = FRAGMENT_SIZE;          // size of the current fragment to be decrypted
 
         // -- decrypt cycle
         for (;;) 
