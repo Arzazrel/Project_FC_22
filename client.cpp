@@ -651,19 +651,21 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
         }
         // -- check file dimension
 		file_up = fopen (path.c_str(),"rb");		// open the file
-  		if (!file) 				
+  		if (!file_up) 				
   			error ("Error in send_upload_request: opening file failed.\n");
   		else                    // file successfully opened
   		{
     		fseek (file_up, 0, SEEK_END); 			// go to the end of the file
     		file_size = ftell (file_up);			// get size in bytes	
     		fclose (file_up);						// close the file
-    		cout << "Size of " << path << "is " << file_size << "Bytes.\n";   // print the files 
+    		cout << "+++ Size of " << path << " is " << file_size << "(" << sizeof(file_size) << ") " << "Bytes.\n";   // print the files 
     		if ( file_size > MAX_FILE_SIZE )
         	{
             	cerr << upload_failed << "File too big.\n";
             	return;        // return to main loop
         	}
+        	
+        	cout << "+++ (non seek)Size of " << path << " is " << get_file_size(path) << "Bytes.\n";   // print the files 
     	}
     	// all control passed, this first message is alway small, only have to send the name of the file to have the server do the checks. 
     	// The subsequent message (sending the file) may have to be handled differently if the file is large.
@@ -676,6 +678,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
           	error("Error in send_delete_request: message Malloc error.\n");
         memcpy(message, (unsigned char*)&file_size, sizeof(long long));           // copy the file size in message
     	memcpy(message + sizeof(long long), file_name, msg_len);           // copy the file name in message
+    	msg_len += sizeof(long long);		// update msg_len (now include the dimension of the file_size and the dimension of the file_name)
     	
     	// -- set aad (client nonce)
     	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
@@ -719,12 +722,12 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
         		if ((cmd_code != -1) && (cmd_code == 2))  // all is ok
         		{
             		memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cout << message;                      // print the message
+                	cout << message << "\n";              // print the message
         		}
         		else if (cmd_code == -1)                  // error message
         		{
         			memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cerr << message;                      // print the error message
+                	cerr << message << "\n";              // print the error message
                 	return;            // delete operation failed
         		}
         		else
@@ -736,7 +739,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
     		else
         	{      // start: else for decryptor ret check of the first message received from server 
             	cerr << "Error in send_delete_request: decrypt error.\n";
-            	ceer << upload_failed;
+            	cerr << upload_failed;
             	return;    // return to manin loop
         	}      // end: else for decryptor ret check of the first message received from server 
 
@@ -778,7 +781,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
                       	error("Error in send_delete_request: message Malloc error.\n");
                      
                     file_up = fopen (path.c_str(),"rb");		// open the file
-              		if (!file) 				
+              		if (!file_up) 				
               			error ("Error in send_upload_request: opening file failed.\n"); 	
                      
                     // read from the file and put into message buffer
@@ -799,7 +802,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
                       	error("Error in send_delete_request: message Malloc error.\n");
                       	
                     file_up = fopen (path.c_str(),"rb");		// open the file
-              		if (!file) 				
+              		if (!file_up) 				
               			error ("Error in send_upload_request: opening file failed.\n"); 
                 }                
         	}      //  end: if (big file)
@@ -816,7 +819,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
                   	error("Error in send_delete_request: message Malloc error.\n");
                   	
                 file_up = fopen (path.c_str(),"rb");		// open the file
-          		if (!file) 				
+          		if (!file_up) 				
           			error ("Error in send_upload_request: opening file failed.\n");
                   	
                 // read from the file and put into message buffer
@@ -837,7 +840,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
         	if (ret >= 0)      // successfully encrypted
         	{
             	// send the list request to the server
-        		send_msg(socket_server, ret, buffer);     // send user file list to client
+        		send_msg(socket_server, ret, buffer,ov_size);     // send user file list to client
         		inc_counter_nonce(client_counter);        // update client counter
         	}
         	
@@ -1003,7 +1006,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
         		else if (cmd_code == -1)                  // error message
         		{
         			memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cerr << message;                      // print the error message
+                	cerr << message << "\n";                      // print the error message
                 	return;            // delete operation failed
         		}
         		else
@@ -1015,7 +1018,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
     		else   // start: else 1.3.1
         	{      
             	cerr << "Error in send_download_request: decrypt error.\n";
-            	ceer << upload_failed;
+            	cerr << upload_failed;
             	return;    // return to manin loop
         	}      // end: else 1.3.1 
         	
@@ -1057,8 +1060,8 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
                 }                           // end: if 1.3.2.1
                 else    // more cycle
                 {                           // start: else 1.3.2.1
-                    file_dw = fopen (path.c_str(),"rb+");		// open the file
-              		if (!file) 				
+                    file_dw = fopen (path.c_str(),"wb+");		// open the file
+              		if (!file_dw) 				
               			error ("Error in send_download_request: opening file failed.\n");
                     
                     // message buffer will not be used
@@ -1083,29 +1086,29 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
         	unsigned char* send_mex;                // for contain the mex to be sent
             unsigned int received_counter;          // for contain the received nonce
         	
-        	msg_len = receive_msg(socket,buff);     // take the len of the response mex from user
+        	msg_len = receive_msg(socket_server, buffer, ov_size);     // take the len of the response mex from user
         	
-        	received_counter =*(unsigned int*)(buff + MSG_AAD_OFFSET);  //take the received client nonce
+        	received_counter =*(unsigned int*)(buffer + MSG_AAD_OFFSET);  //take the received client nonce
         	// check if the nonce is correct
-        	if(received_counter == current_user->client_counter)          // if is equal is correct otherwhise the message is not fresh
+        	if(received_counter == server_counter)          // if is equal is correct otherwhise the message is not fresh
         	{      // start: if 1.3.3
             	ret = decryptor(buffer, msg_len, session_key, cmd_code, aad, aad_len, message, ov_size, file_dw);  // decrypt the received message
-            	inc_counter_nonce(current_user->client_counter);          // increment the client nonce		
+            	inc_counter_nonce(server_counter);          // increment the client nonce		
             	// free buffer that could be very big
-            	free(buff);
+            	free(buffer);
             	
             	if (ret >= 0)                         // correctly decrypted 
         		{                 // start: if 1.3.3.1 (check decrypt)
             		// check the cmd_code received
-            		if ((cmd_code != -1) && (cmd_code == 2))  // all is ok -- start: if 1.3.3.1.1
+            		if ((cmd_code != -1) && (cmd_code == 3))  // all is ok -- start: if 1.3.3.1.1
             		{
                 		// more cycle, the decrypted file is has already been written on disk
                     	if ( (file_size + AE_block_size) > FRAGMENT_SIZE )     
                         	fclose (file_dw);						// close the file
                         else    // 1 cycle, write the decrypted file on the disk
                         {
-                            file_dw = fopen (path.c_str(),"rb+");		// open the file
-                      		if (!file) 				
+                            file_dw = fopen (path.c_str(),"wb+");		// open the file
+                      		if (!file_dw) 				
                       			error ("Error in handle_upload_req: opening file failed.\n");
                       		
                             fwrite(message, 1, file_size, file_dw);     // write
@@ -1114,9 +1117,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
                         }
                         
                         cout << "Download operation successfully done.\n";
-                        
-                        // free all
-                    	free(message);      // free the buffer containing the cleartext message (user file list)
+                        cout << "Downloaded " << file_name << " (" << file_size <<" Bytes).\n";
             		}         // end: if 1.3.3.1.1
             		else if (cmd_code == -1)                  // error message
             		{
@@ -1138,14 +1139,14 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
         	}      // end: if 1.3.3
         	else   // start: else 1.3.3
         	{
+        		free(buffer);         // free buffer containing the encrypted message 
             	cerr << err_rec_nonce;         // print mex error
                 cerr << "Error in receiving the file from server, download operation failed.\n";
         	}      // end: else 1.3.3
         
             // free all
         	free(message);      // free the buffer containing the cleartext message (user file list)
-        	free(aad);          // free aad in this case the server nonce
-        	free(buffer);         // free buffer containing the encrypted message   	
+        	free(aad);          // free aad in this case the server nonce  	
     	}          // end: if 1.3 (first nounce control)
     	else       // else 1.3 (first nounce control)
             cerr << err_rec_nonce;

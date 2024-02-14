@@ -839,7 +839,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     long long ret;
 
     // cleartext file is composed by ( unsigned long | file name)
-    file_size =*(long long*)(cleartext_size);       // take the size of the file
+    file_size =*(long long*)(cleartext);       // take the size of the file
     // take the name of the file
     char* temp_f_n = (char*)malloc(cleartext_size - sizeof(long long));    // buffer for file name
     memcpy(temp_f_n, cleartext + sizeof(long long), cleartext_size - sizeof(long long));       // copy in message
@@ -926,6 +926,8 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     	if(!buff)
         	error("Error in handle_delete_req: buff Malloc error.\n");
         
+        cout << "+++++++++ " << "Message in the response: " << message << "\n";     // +++++++++++++++++++++++++++++
+        
         // encrypt message (small size message)
         ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buff);
     	if (ret >= 0)      // successfully encrypted
@@ -943,7 +945,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     	// check if there was an error, in this case have to exit from the function
     	if (cmd_code == -1)
     	{
-        	cerr << "Error in handle_upload_req: failed upload operation of " << file_name << " for the user " << << ".\n";
+        	cerr << "Error in handle_upload_req: failed upload operation of " << file_name << " for the user " << current_user->username << ".\n";
         	return;
     	}
     	
@@ -980,8 +982,8 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
             }
             else    // more cycle
             {
-                file_up = fopen (path.c_str(),"rb+");		// open the file
-          		if (!file) 				
+                file_up = fopen (path.c_str(),"wb+");		// open the file
+          		if (!file_up) 				
           			error ("Error in handle_upload_req: opening file failed.\n");
                 
                 // message buffer will not be used
@@ -1006,7 +1008,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
         unsigned char* send_mex;                // for contain the mex to be sent
         unsigned int received_counter;          // for contain the received nonce
     	
-    	msg_len = receive_msg(socket,buff);     // take the len of the response mex from user
+    	msg_len = receive_msg(socket,buff,ov_size);     // take the len of the response mex from user
     	
     	received_counter =*(unsigned int*)(buff + MSG_AAD_OFFSET);  //take the received client nonce
     	// check if the nonce is correct
@@ -1028,18 +1030,14 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
                     	fclose (file_up);						// close the file
                     else    // 1 cycle, write the decrypted file on the disk
                     {
-                        file_up = fopen (path.c_str(),"rb+");		// open the file
-                  		if (!file) 				
+                        file_up = fopen (path.c_str(),"wb+");		// open the file
+                  		if (!file_up) 				
                   			error ("Error in handle_upload_req: opening file failed.\n");
                   		
                         fwrite(message, 1, file_size, file_up);     // write
                         
                         fclose (file_up);						    // close the file
                     }
-                    
-                    // free all
-                	free(message);      // free the buffer containing the cleartext message
-                	free(aad);          // free aad in this case the server nonce
                     
                     // set the message for the confirm or not
                     char temp[] = "File successfully uploaded on the server.\n";
@@ -1052,7 +1050,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
         		else if (cmd_code == -1)                  // error message
         		{
         			memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cerr << message;                      // print the error message
+                	cerr << message << "\n";              // print the error message
                 	return;            // delete operation failed
         		}
         		else
@@ -1095,9 +1093,8 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     	}
     
         // free all
-    	free(message);      // free the buffer containing the cleartext message (user file list)
+        free(message);      // free the buffer containing the cleartext message (only for file with size < gragment_size)
     	free(aad);          // free aad in this case the server nonce
-    	free(buff);         // free buffer containing the encrypted message
     	
     	// 4) send the final response of the delete opration
         // -- set aad (nonce)
@@ -1111,6 +1108,8 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     	if(!buff)
         	error("Error in handle_delete_req: buff Malloc error.\n");
         
+        cout << "+++++++++ " << "Message in the response: " << send_mex << "\n";     // +++++++++++++++++++++++++++++
+        
         // encrypt message
         ret = encryptor(cmd_code, aad, sizeof(unsigned int), send_mex, msg_len , session_key, buff);
     	if (ret >= 0)      // successfully encrypted
@@ -1119,12 +1118,12 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     		send_msg(socket, ret, buff);                      // send user file list to client
     		inc_counter_nonce(current_user->server_counter);  // update server counter
     	}
+    	
+    	// free all
+    	free(send_mex);      // free the buffer containing the cleartext message (user file list)
+		free(aad);          // free aad in this case the server nonce
+		free(buff);         // free buffer containing the encrypted message
     }       // end: else, file name and size ok
-    
-    // free all
-    free(send_mex);      // free the buffer containing the cleartext message (user file list)
-	free(aad);          // free aad in this case the server nonce
-	free(buff);         // free buffer containing the encrypted message
 }
 
 /*
@@ -1149,8 +1148,8 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
     long long ret;
     
     // take the name of the file
-    char* temp_f_n = (char*)malloc(cleartext_size - sizeof(unsigned long));    // buffer for file name
-    memcpy(temp_f_n, cleartext + sizeof(unsigned long), cleartext_size - sizeof(unsigned long));       // copy in message
+    char* temp_f_n = (char*)malloc(cleartext_size);    // buffer for file name
+    memcpy(temp_f_n, cleartext, cleartext_size);       // copy in message
     string file_name = temp_f_n;    // string for file name
     string path;                    // string for complete path of the specified file
     
@@ -1168,7 +1167,7 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
     }       // end: if to check file name
     else    // start: else 1.0 -- file name and size ok
     {
-        cout << "Download request of the file '" << file_name << "' (with size: " << file_size << " ) arrived from user: " << current_user->username << ".\n";
+        cout << "Download request of the file '" << file_name << "' arrived from user: " << current_user->username << ".\n";
         
         // 0) verify the correctness
         // -- verify file name
@@ -1195,7 +1194,7 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
                 {
                     // set error mex
                     cmd_code = -1;
-                    string temp = "Error with the file '" + file_name + "', its size is: " + file_size + ". Download operation failed.\n";
+                    string temp = "Error with the file '" + file_name + "', its size is: " + to_string(file_size) + ". Download operation failed.\n";
                     msg_len = strlen(temp.c_str()) + 1;       // update msg_len
                    	message = (unsigned char*)malloc(msg_len);
                    	if(!message)
@@ -1205,8 +1204,9 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
                 else
                 {
                     // all is ok
-                    cout << "The file required by user '" << current_user->username << "' for downloading is present on the server and has a size: " file_size << ".\n";
+                    cout << "The file required by user '" << current_user->username << "' for downloading is present on the server and has a size: " << file_size << ".\n";
                    	message = (unsigned char*)malloc(sizeof(long long));
+                   	msg_len = sizeof(long long);				// update msg_len
                    	if(!message)
                        	error("Error in handle_download_req: message Malloc error.\n");
                    	memcpy(message, (unsigned char*)&file_size, sizeof(long long));         // copy in message
@@ -1215,6 +1215,14 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
         }       // end: if 1.1
         else
         {       // start: else 1.1
+        	// set error mex
+            cmd_code = -1;
+            char temp[] = "Error: the file names passed did not pass the white list check, they have characters that are not allowed in them.\n";
+            msg_len = strlen(temp) + 1;       // update msg_len
+           	message = (unsigned char*)malloc(msg_len);
+           	if(!message)
+               	error("Error in handle_delete_req: message Malloc error.\n");
+           	memcpy(message, temp, msg_len);         // copy in message
         }       // end: else 1.1
         
         // 1) send the file size or the error mex to the client
@@ -1270,8 +1278,8 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
         	ov_size = true;                // set ov_size
         	
         	// buffer will be very large
-        	buffer = (unsigned char*)malloc(file_size + sizeof(unsigned int)*2 + AE_block_size + AE_iv_len + AE_tag_len + sizeof(short) + 16);      // temp buffer for message 
-        	if(!buffer)
+        	buff = (unsigned char*)malloc(file_size + sizeof(unsigned int)*2 + AE_block_size + AE_iv_len + AE_tag_len + sizeof(short) + 16);      // temp buffer for message 
+        	if(!buff)
             	error("Error in send_upload_request: buffer Malloc error.\n");
             	
             // check the size of the file to understand whether the encryption will be done in one loop (you have to put the contents of the file in message) 
@@ -1284,7 +1292,7 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
                   	error("Error in send_delete_request: message Malloc error.\n");
                  
                 file_dw = fopen (path.c_str(),"rb");		// open the file
-          		if (!file) 				
+          		if (!file_dw) 				
           			error ("Error in send_upload_request: opening file failed.\n"); 	
                  
                 // read from the file and put into message buffer
@@ -1292,7 +1300,7 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
                 if(ret < file_size) 
                 {
                     cerr << "Error while reading file '" << file_name << "'\n"; 
-                    fclose(file_up);
+                    fclose(file_dw);
                     return;                 //return to main loop
                 }
                 fclose(file_dw);
@@ -1305,15 +1313,15 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
                   	error("Error in send_delete_request: message Malloc error.\n");
                   	
                 file_dw = fopen (path.c_str(),"rb");		// open the file
-          		if (!file) 				
+          		if (!file_dw) 				
           			error ("Error in send_upload_request: opening file failed.\n"); 
             }           // end: if 1.2.2
     	}      //  end: if 1.2 (big file)
     	else           // small file -- start: else 1.2 (small file)
     	{
         	// -- buffer: all in one cycle and with small buffer
-        	buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
-        	if(!buffer)
+        	buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
+        	if(!buff)
             	error("Error in send_upload_request: buffer Malloc error.\n");
             
             // -- set the message to ecnrypt
@@ -1322,7 +1330,7 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
               	error("Error in send_delete_request: message Malloc error.\n");
               	
             file_dw = fopen (path.c_str(),"rb");		// open the file
-      		if (!file) 				
+      		if (!file_dw) 				
       			error ("Error in send_upload_request: opening file failed.\n");
               	
             // read from the file and put into message buffer
@@ -1337,18 +1345,18 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
     	}      // -- end: else 1.2 (small file)
     	
     	// -- encrypt the message, cmd_code for the download operation is 3. In this call are specified also ov_size and file descriptor 
-    	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, file_size , session_key, buffer, ov_size, file_dw);
+    	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, file_size , session_key, buff, ov_size, file_dw);
     	if ( (file_size + AE_block_size) > FRAGMENT_SIZE )
         	fclose (file_dw);						// close the file
     	if (ret >= 0)      // successfully encrypted
     	{
         	// send the list request to the server
-    		send_msg(socket_server, ret, buffer);     // send user file list to client
+    		send_msg(socket, ret, buff, ov_size);     // send user file list to client
     		inc_counter_nonce(current_user->server_counter);        // update client counter
     	}
     	
     	// VERY IMPORTANT free buffer, it can be very large
-    	free(buffer);       // free buffer containing the encrypted message
+    	free(buff);       // free buffer containing the encrypted message
     	free(message);      // free the buffer containing the cleartext message (user file list)
     	free(aad);          // free aad in this case the server nonce
     }       // end: else 1.0 -- file name and size ok    

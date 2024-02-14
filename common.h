@@ -9,6 +9,7 @@
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/err.h>
+#include <cmath>
 #include <iostream> 
 #include <fstream> 
 #include <stdlib.h>
@@ -26,9 +27,9 @@
 #define MAX_FILE_SIZE 4294967296    // maximum size of files that can be saved and received by the cloud server 4GBi = 2^32 Bytes
 #define MAX_DIM_FILE_NAME 100       // maximum length for a file_names, a size of 100 each is more than sufficient for most legitimate cases.
 #define MAX_SIZE_F_OS 4294967496    // maximum length for a packet with a big file (oversize)
-#define FRAGMENT_SIZE 209715200     // maximum size of files that can be encrypted or decrypted in a single update step (for further clarification SEE NOTE 1 or documentation) 200MBi = 200*2^20 Bytes             
+#define FRAGMENT_SIZE 200*(long)pow(2,20)    // maximum size of files that can be encrypted or decrypted in a single update step (for further clarification SEE NOTE 1 or documentation) 200MBi = 200*2^20 Bytes    
 // Messages exchanged normally do not contain large files but keys, certificates, signatures or text (they do not need large buffers to be handled)
-#define MAX_SIZE 102400             // the maximum length for normal message (100 KBi)
+#define MAX_SIZE 100*(long)pow(2,10)             // the maximum length for normal message (100 KBi)
 #define MSG_MAX 102000
 #define NONCE_SIZE 4                // size of the nonce
 #define MSG_AAD_OFFSET 34           // offset of the AAD(usually only nonce) in the message format (AAD is after cmd_code,tag,IV,aad_len)
@@ -85,14 +86,14 @@ void error(const char *msg)
 */
 long long get_file_size(string file_name)
 {
-    struct stati64 stat_buf;
-    
-    if(fstati64(file_name.c_str(), &stat_buf) != 0)
+	struct stat64 stat_buf;
+	
+	if(stat64(file_name.c_str(), &stat_buf) != 0)
     {
         perror("Erro in get file size.\n");
         return -1;                  // return error
     }
-    
+
     if (stat_buf.st_size > 0)
         return stat_buf.st_size;        // return the dimension of the file, all correct
     else
