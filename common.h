@@ -27,7 +27,7 @@
 #define MAX_FILE_SIZE 4294967296    // maximum size of files that can be saved and received by the cloud server 4GBi = 2^32 Bytes
 #define MAX_DIM_FILE_NAME 100       // maximum length for a file_names, a size of 100 each is more than sufficient for most legitimate cases.
 #define MAX_SIZE_F_OS 4294967496    // maximum length for a packet with a big file (oversize)
-#define FRAGMENT_SIZE 200*(long)pow(2,20)    // maximum size of files that can be encrypted or decrypted in a single update step (for further clarification SEE NOTE 1 or documentation) 200MBi = 200*2^20 Bytes    
+#define FRAGMENT_SIZE 20*(long)pow(2,20)    // maximum size of files that can be encrypted or decrypted in a single update step (for further clarification SEE NOTE 1 or documentation) 200MBi = 200*2^20 Bytes    
 // Messages exchanged normally do not contain large files but keys, certificates, signatures or text (they do not need large buffers to be handled)
 #define MAX_SIZE 100*(long)pow(2,10)             // the maximum length for normal message (100 KBi)
 #define MSG_MAX 102000
@@ -579,11 +579,15 @@ long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, un
         unsigned int msg_header = AE_tag_len + AE_iv_len + aad_len + sizeof(unsigned int) + cmd_code_size;   
         unsigned char* inbuf =(unsigned char*)malloc(FRAGMENT_SIZE);
      
-        int inlen;              // how was read from the file in the current cycle
+        long inlen;              // how was read from the file in the current cycle
 		
+		int i = 0;
         // -- encrypt cycle
         for (;;) 
         {
+        	cout << "+++++++++++ " << "Encrypt cycle: " << i << "\n";		// +++++++++++++++
+        	i++;
+        	
             inlen = fread(inbuf, 1, FRAGMENT_SIZE, file_name);     // read from file max FRAGMENT_SIZE Bytes
             
             if (inlen <= 0)         // check if th end of the file
@@ -591,10 +595,11 @@ long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, un
             
             if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, inbuf, inlen))     // encrypt update
                 handleErrors();             // error
-            ciphertext_len += len;         // update ciphertext len
             
             // write encrypt part into output_buffer
             memcpy(output_buffer + msg_header + ciphertext_len, ciphertext, len);
+            
+            ciphertext_len += len;         // update ciphertext len
         }
         
         // -- final
@@ -794,7 +799,7 @@ long long decryptor(unsigned char* input_buffer, long long input_len, unsigned c
     else        // more cicle, does not write the decrypted fragments into a buffer in memory but directly into the file passed as a parameter.
     {
         // -- set utilities  
-        unsigned char out_buf[FRAGMENT_SIZE + AE_block_size];   // buffer to contain the fragment of cleartext
+        unsigned char* out_buf = (unsigned char*)malloc(FRAGMENT_SIZE + AE_block_size);   // buffer to contain the fragment of cleartext
         long long to_read = ciphertext_len - FRAGMENT_SIZE;     // how many bytes are missing to complete the decryption
         long long curr_ciphert_len = FRAGMENT_SIZE;             // size of the current fragment to be decrypted
 
