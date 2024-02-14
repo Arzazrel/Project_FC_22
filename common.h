@@ -24,13 +24,13 @@
 #define MAX_CLIENTS 20              // maximum number of clients connected to the server at the same time
 // -- define for messages format -- GCM mex format is -> ( cmd_code | tag | IV | aad_len | aad | ciphertext)
 // For further clarification on the maximum size of packages and file management in this project, SEE NOTE 0 at the end of the file or look at the documentation on github.
-#define MAX_FILE_SIZE 4294967296    // maximum size of files that can be saved and received by the cloud server 4GBi = 2^32 Bytes
+#define MAX_FILE_SIZE (long)pow(2,32)    	// maximum size of files that can be saved and received by the cloud server 4GBi = 2^32 Bytes
 #define MAX_DIM_FILE_NAME 100       // maximum length for a file_names, a size of 100 each is more than sufficient for most legitimate cases.
-#define MAX_SIZE_F_OS 4294967496    // maximum length for a packet with a big file (oversize)
-#define FRAGMENT_SIZE 20*(long)pow(2,20)    // maximum size of files that can be encrypted or decrypted in a single update step (for further clarification SEE NOTE 1 or documentation) 200MBi = 200*2^20 Bytes    
+#define MAX_SIZE_F_OS MAX_FILE_SIZE + 200   // maximum length for a packet with a big file (oversize)
+#define FRAGMENT_SIZE 20*(long)pow(2,20)    // maximum size of files that can be encrypted or decrypted in a single update step (for further clarification SEE NOTE 1 or documentation) 20MBi = 20*2^20 Bytes <- for motivation of chosen value -> SEE NOTE 2
 // Messages exchanged normally do not contain large files but keys, certificates, signatures or text (they do not need large buffers to be handled)
-#define MAX_SIZE 100*(long)pow(2,10)             // the maximum length for normal message (100 KBi)
-#define MSG_MAX 102000
+#define MAX_SIZE 100*(long)pow(2,10)        // the maximum length for normal message (100 KBi)
+#define MSG_MAX MAX_SIZE - 200
 #define NONCE_SIZE 4                // size of the nonce
 #define MSG_AAD_OFFSET 34           // offset of the AAD(usually only nonce) in the message format (AAD is after cmd_code,tag,IV,aad_len)
 #define MSG_AAD_LEN_OFFSET 30       // offset of the AAD_len in the message format (AAD_len is after cmd_code,tag,IV)
@@ -59,7 +59,7 @@ const EVP_MD* sign_alg = EVP_sha256();                  // indicates algorithm t
     Description:    function to show the error message using ERR_print_errors(), which is a utility function that prints
                     the error strings for all errors that OpenSSL has recorded in bp, thus emptying the error queue.
 */
-void handleErrors(void)
+void handleErrors()
 {
 	ERR_print_errors_fp(stderr);
 	abort();
@@ -480,8 +480,6 @@ long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, un
     int ret;
     unsigned int cmd_code_size = sizeof(short);     // take size of cmd_code
     
-    cout << "+++++++++++ " << "Start encrypt, ov_size= " << ov_size << "\n";		// +++++++++++++++
-    
     // 1) dimension check
     // -- dimension check 1, checks if at least one of the two input buffers is larger than the maximum allowed size.
     // ---- for small file
@@ -538,7 +536,7 @@ long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, un
 	
 	// -- buffer for the ciphertext
 	unsigned char* ciphertext;
-	cout << "+++++++++++ " << "input len: " << input_len << " fragment_size: " << FRAGMENT_SIZE << "\n";		// +++++++++++++++
+	
 	if ( (input_len + AE_block_size) <= FRAGMENT_SIZE )
     	ciphertext = (unsigned char *)malloc(input_len + AE_block_size);    // buffer to contain the ciphertext, maximum size is plaintext_size + block_size
 	else
@@ -560,7 +558,6 @@ long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, un
     // -- start update cycles: one cycle if input size is less than FRAGMENT_SIZE, more cycles if input size is bigger than FRAGMENT_SIZE
     if ( (input_len + AE_block_size) <= FRAGMENT_SIZE )   // only one cicle
     {
-    	cout << "+++++++++++ " << "Encrypt in 1 cycle: " << "\n";		// +++++++++++++++
         // -- update : provide the message to be encrypted, and obtain the ciphertext output.
     	if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, input_buffer, input_len))
         	handleErrors();
@@ -573,7 +570,6 @@ long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, un
     }
     else        // more cicle
     {
-    	cout << "+++++++++++ " << "Encrypt in more cycle: " << "\n";		// +++++++++++++++
         // -- set utilities
         // the offset to the beginning of the cipher text in the output buffer
         unsigned int msg_header = AE_tag_len + AE_iv_len + aad_len + sizeof(unsigned int) + cmd_code_size;   
@@ -581,13 +577,9 @@ long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, un
      
         long inlen;              // how was read from the file in the current cycle
 		
-		int i = 0;
         // -- encrypt cycle
         for (;;) 
         {
-        	cout << "+++++++++++ " << "Encrypt cycle: " << i << "\n";		// +++++++++++++++
-        	i++;
-        	
             inlen = fread(inbuf, 1, FRAGMENT_SIZE, file_name);     // read from file max FRAGMENT_SIZE Bytes
             
             if (inlen <= 0)         // check if th end of the file
@@ -869,10 +861,21 @@ long long decryptor(unsigned char* input_buffer, long long input_len, unsigned c
         transmission (which would be due to an application malfunction or a malicious thrust).
         The only case in which transmissions can be larger is during downloading and uploading files (which can be up to 4GBi in size).
     NOTE 1:
-         In cases of downloading and uploading files larger than the maximum size of the standard packet, the maximum size of the 
-         'oversize' packet (packet in which there is a large file) must be adopted. In this case, encryption and decryption cannot be 
-         done on the entire file at once, as this would occupy a lot of memory. For this reason, a constant (FRAGMENT_SIZE) is defined 
-         which sets the maximum size of a fragment for encryption and decryption; if the file exceeds this size, it will be divided 
-         into fragments of this maximum size and passed to the encryption or decryption update each time. 
-         Then the entire encrypted file will be sent in the packet.
+        In cases of downloading and uploading files larger than the maximum size of the standard packet, the maximum size of the 
+        'oversize' packet (packet in which there is a large file) must be adopted. In this case, encryption and decryption cannot be 
+        done on the entire file at once, as this would occupy a lot of memory. For this reason, a constant (FRAGMENT_SIZE) is defined 
+        which sets the maximum size of a fragment for encryption and decryption; if the file exceeds this size, it will be divided 
+        into fragments of this maximum size and passed to the encryption or decryption update each time. 
+        Then the entire encrypted file will be sent in the packet.
+    NOTE 2:
+    	This value is at the discretion of the programmer or requirement. it is a value to save RAM by avoiding allocating too large buffers 
+    	(for encrypting and decrypting at once) by going to allocate large buffers maximum this size (for encrypting and decrypting with 
+     	multiple cycles and reading or writing directly from/to the file).
+    	For devices with lots of RAM available it may not be a problem to allocate 2 buffers as large as the file to be transferred; 
+    	therefore the fragment size can be put equal to the maximum file size.
+    	In the project you have 4GBi file size limit, it is not a wise choice to want to take up twice as much RAM to encrypt and decrypt the file at once.
+		Test files for transfer are also provided in this project. The two largest files are one of 39.6MBi and one of 79MBi. 
+		In the program the fragment size is set 20MBi because this way various scenarios can be tested while staying within the limits of github 
+		which does not allow files larger than 100MBi. With 20MBi as the fragment size, text files (which are small) will be encrypted and 
+		decrypted in one cycle while larger .tar files will need multiple cycles of encryption and decryption (each will run a different number of cycles).
 */

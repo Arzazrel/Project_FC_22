@@ -19,7 +19,7 @@
 #include <openssl/err.h>
 #include <arpa/inet.h>
 // my library
-#include "common.h"                 // 
+#include "common.h"                 // Files containing functions and variables useful to both client and server
 
 // ------------------------------- start: constant -------------------------------
 // -- for reading commands from the command line, the maximum size prevents the entry of too many characters. The commands are few and fixed and with few arguments.
@@ -655,17 +655,13 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
   			error ("Error in send_upload_request: opening file failed.\n");
   		else                    // file successfully opened
   		{
-    		fseek (file_up, 0, SEEK_END); 			// go to the end of the file
-    		file_size = ftell (file_up);			// get size in bytes	
-    		fclose (file_up);						// close the file
-    		cout << "+++ Size of " << path << " is " << file_size << "(" << sizeof(file_size) << ") " << "Bytes.\n";   // print the files 
+    		file_size = get_file_size(path);        // get the file size
+    		cout << "The specified file '" << path << "' is large " << file_size << "Bytes.\n";   // print the files 
     		if ( file_size > MAX_FILE_SIZE )
         	{
             	cerr << upload_failed << "File too big.\n";
             	return;        // return to main loop
         	}
-        	
-        	cout << "+++ (non seek)Size of " << path << " is " << get_file_size(path) << "Bytes.\n";   // print the files 
     	}
     	// all control passed, this first message is alway small, only have to send the name of the file to have the server do the checks. 
     	// The subsequent message (sending the file) may have to be handled differently if the file is large.

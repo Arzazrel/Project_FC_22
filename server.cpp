@@ -23,7 +23,7 @@
 #include <pthread.h>
 #include <dirent.h>
 // my library
-#include "common.h"
+#include "common.h"						// Files containing functions and variables useful to both client and server
 
 using namespace std;
 
@@ -43,8 +43,8 @@ list<User> users;                           // list of the users signed in the s
 // struct to contain utility parameter for one client connection
 struct Args
 {
-	int socket;                        // socket of the client connection
-	User* user_ref;                    // reference to the user structure linked to the connected client user
+	int socket;                        	// socket of the client connection
+	User* user_ref;                    	// reference to the user structure linked to the connected client user
 	unsigned char* session_key = NULL;  // contain the session key between the server and the client with which the user has connected
 	
 };
@@ -74,7 +74,12 @@ string serv_privk_path = keys_path + "s_privk.pem";         // path to server pr
 
 // ------------------------------- start: general function -------------------------------
 
-// only for test ourpose
+/*
+	Description: only for test purpose
+		function to enter the password for the server's private key automatically, used to speed up testing. 
+		In the delivered code the function will be commented out but not removed so that users can do testing faster. 
+		The password should be entered only when you want to initiate a secure connection with a client. 
+*/
 int pass_cb(char *buf, int size, int rwflag, void *u)
 {
 	int len;
@@ -96,11 +101,11 @@ X509* get_server_certificate()
 {
     X509* server_cert;
 
-    FILE* cert_file = fopen(serv_cert_path.c_str(), "r");                // open server certificate file
+    FILE* cert_file = fopen(serv_cert_path.c_str(), "r");     	// open server certificate file
 	if(!cert_file) 
     	error("Error in opening the server certificate.\n");
 	
-	server_cert = PEM_read_X509(cert_file, NULL, NULL, NULL);    // read server certificate
+	server_cert = PEM_read_X509(cert_file, NULL, NULL, NULL);   // read server certificate
 	if(!server_cert) 
     	error("Error in PEM_read_bio_X509 returned NULL\n");
 	fclose(cert_file);                                          // close server certificate file
@@ -113,15 +118,15 @@ EVP_PKEY* get_server_private_key()
 {
     EVP_PKEY* s_privk;
     
-    FILE* s_key_file = fopen(serv_privk_path.c_str(), "r");                 // open server private key file
+    FILE* s_key_file = fopen(serv_privk_path.c_str(), "r");        		// open server private key file
 	if(!s_key_file) 
     	error("Error in opening the server private key pem file.\n");
 	
-	//s_privk = PEM_read_PrivateKey(s_key_file, NULL, NULL, NULL);    // read server private key
-	s_privk = PEM_read_PrivateKey(s_key_file, NULL, pass_cb, NULL);    // read server private key
+	//s_privk = PEM_read_PrivateKey(s_key_file, NULL, NULL, NULL);    	// read server private key
+	s_privk = PEM_read_PrivateKey(s_key_file, NULL, pass_cb, NULL);    	// read server private key (in authomatic way)
 	if(!s_privk) 
     	error("Error in PEM_read_PrivateKey returned NULL.\n");
-	fclose(s_key_file);                                             // close server private key file
+	fclose(s_key_file);                                             	// close server private key file
 	
 	return s_privk;        // return server private key
 }
@@ -166,12 +171,12 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
     unsigned char* message;         // contain the message to be sent
     int ret;
     
-    string path = ded_store_path + "/" + current_user->username;  // path of the folder to be scanned
+    string path = ded_store_path + "/" + current_user->username;  	// path of the folder to be scanned
     
     unsigned int msg_len = 0;
     int n;              // number of different folder (user), plus 2
     
-    n = scandir(path.c_str(), &folder_list, 0, alphasort);      // scan folder
+    n = scandir(path.c_str(), &folder_list, 0, alphasort); 			// scan folder
     if (n == -1)        // error 
     {
         error("Error in scandir.\n");
