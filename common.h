@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <limits.h>
 #include <string.h> 
+#include <sys/types.h> 
+#include <sys/stat.h>       // for have size of the file > 2GBi
 
 // ------------------------------- start: constant -------------------------------
 #define USERNAME_SIZE 20            // maximum length for users' usernames
@@ -72,6 +74,35 @@ void error(const char *msg)
     exit(1);
 }
 // ------------------------------- end: function to manage error message -------------------------------
+
+// ------------------------------- start: general function -------------------------------
+
+/*
+    Description:    
+        function to get the file size of a specified file. use stati64 and fstati64 for to have the file size on 64 bit and be able to handle files larger than 2 GBi
+    Parameters:     file name
+    Return:         size of the file or -1 if occurs some error
+*/
+long long get_file_size(string file_name)
+{
+    struct stati64 stat_buf;
+    
+    if(fstati64(file_name.c_str(), &stat_buf) != 0)
+    {
+        perror("Erro in get file size.\n");
+        return -1;                  // return error
+    }
+    
+    if (stat_buf.st_size > 0)
+        return stat_buf.st_size;        // return the dimension of the file, all correct
+    else
+    {
+        // size of the file negative, error
+        cerr << "Error in the size of the file, is <= 0\n";
+        return -1;                  // return error
+    }
+}
+// ------------------------------- end: general function -------------------------------
 
 // ------------------------------- start: function to canonicalization and command injection -------------------------------
 /*
@@ -156,7 +187,7 @@ void inc_counter_nonce(unsigned int &counter)
         - ov_size: indicates if the package is to contain 'oversize' files, in which case the controls on the maximum possible size 
                    must be different. By default the parameter is set to 0.
 */
-void send_msg(int socket, unsigned long msg_size, unsigned char* message, bool ov_size = false)
+void send_msg(int socket, long long msg_size, unsigned char* message, bool ov_size = false)
 {
 	int ret;
 	
@@ -193,11 +224,11 @@ void send_msg(int socket, unsigned long msg_size, unsigned char* message, bool o
     Return:
         - size of the received message
 */
-unsigned long receive_msg(int socket, unsigned char* message, bool ov_size = false)
+long long receive_msg(int socket, unsigned char* message, bool ov_size = false)
 {
 	int ret;
 	uint32_t networknumber;    // contain the size of the message to receive
-	unsigned long recieved = 0; // how much I received
+	long long recieved = 0; // how much I received
 
 	ret = recv(socket, &networknumber, sizeof(uint32_t), 0);
 	if(ret < 0)
@@ -441,7 +472,7 @@ unsigned int dh_generate_session_key(unsigned char* shared_secret, unsigned int 
     Return:
         - int that rapresent: the total length of the message (success) or '-1' if encryption has failed
 */
-int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned char* input_buffer, unsigned int input_len, unsigned char* shared_key, unsigned char *output_buffer, bool ov_size = false, FILE* file_name = 0)
+long long encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned char* input_buffer, long long input_len, unsigned char* shared_key, unsigned char *output_buffer, bool ov_size = false, FILE* file_name = 0)
 {
 	
 	//FILE* file_name;
@@ -484,7 +515,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
     // -- generate context, buffer and usefull variable
     EVP_CIPHER_CTX* ctx;               // create context for Authenticated Encryption
 	int len = 0;
-	int ciphertext_len = 0;            // contain the size of the ciphertext
+	long long ciphertext_len = 0;            // contain the size of the ciphertext
 	
     // -- generate IV
     unsigned char *iv = (unsigned char *)malloc(AE_iv_len);     // allocate buffer to IV
@@ -541,7 +572,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
     }
     else        // more cicle
     {
-    	cout << "+++++++++++ " << "Encrypt in 1 cycle: " << "\n";		// +++++++++++++++
+    	cout << "+++++++++++ " << "Encrypt in more cycle: " << "\n";		// +++++++++++++++
         // -- set utilities
         // the offset to the beginning of the cipher text in the output buffer
         unsigned int msg_header = AE_tag_len + AE_iv_len + aad_len + sizeof(unsigned int) + cmd_code_size;   
@@ -576,8 +607,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
     	handleErrors();
 	
 	// 3) write the packet with the ciphertext in the output_buffer
-	unsigned int output_len = AE_tag_len + ciphertext_len + AE_iv_len + aad_len + sizeof(unsigned int) + cmd_code_size;   // len of the message
-	unsigned int written = 0;  // counter of written Byte
+	long long written = 0;  // counter of written Byte
 	
 	// copy in the output_buffer, in the format -> ( cmd_code | tag | IV | nonce_len | nonce | ciphertext)
 	// -- write cmd_code in output buffer
@@ -627,7 +657,7 @@ int encryptor(short cmd_code, unsigned char* aad, unsigned int aad_len, unsigned
     Return:
         - int that rapresent: the length of the output_buffer containing the decrypted message or '-1' if decryption has failed
 */
-int decryptor(unsigned char* input_buffer, unsigned long input_len, unsigned char* shared_key, short &cmd_code, unsigned char* output_aad, unsigned int &aad_len, unsigned char* output_buffer, bool ov_size = false, FILE* file_name = 0)
+long long decryptor(unsigned char* input_buffer, long long input_len, unsigned char* shared_key, short &cmd_code, unsigned char* output_aad, unsigned int &aad_len, unsigned char* output_buffer, bool ov_size = false, FILE* file_name = 0)
 {
     int ret;
     unsigned int cmd_code_size = sizeof(short);     // take size of cmd_code
@@ -658,8 +688,8 @@ int decryptor(unsigned char* input_buffer, unsigned long input_len, unsigned cha
     // 2) decrypt
     // -- generate context, buffer and usefull variable
     EVP_CIPHER_CTX *ctx;                // create context for Authenticated Decryption
-	unsigned long read = 0;
-	unsigned long output_len = 0;
+	unsigned int read = 0;
+	long long output_len = 0;
 	int len;
 	
 	// -- generate IV
@@ -705,7 +735,7 @@ int decryptor(unsigned char* input_buffer, unsigned long input_len, unsigned cha
 	memcpy(complete_aad + cmd_code_size, output_aad, aad_len); // copy aad
 
 	// -- read ciphertext
-	unsigned long ciphertext_len = input_len - read;            // take ciphertext len
+	long long ciphertext_len = input_len - read;            // take ciphertext len
 	// dimension check 5
 	// -- small file
 	if(!ov_size && (ciphertext_len > MSG_MAX))
@@ -764,8 +794,8 @@ int decryptor(unsigned char* input_buffer, unsigned long input_len, unsigned cha
     {
         // -- set utilities  
         unsigned char out_buf[FRAGMENT_SIZE + AE_block_size];   // buffer to contain the fragment of cleartext
-        unsigned long to_read = ciphertext_len - FRAGMENT_SIZE;  // how many bytes are missing to complete the decryption
-        unsigned long curr_ciphert_len = FRAGMENT_SIZE;          // size of the current fragment to be decrypted
+        long long to_read = ciphertext_len - FRAGMENT_SIZE;     // how many bytes are missing to complete the decryption
+        long long curr_ciphert_len = FRAGMENT_SIZE;             // size of the current fragment to be decrypted
 
         // -- decrypt cycle
         for (;;) 
