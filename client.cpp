@@ -93,6 +93,11 @@ void print_command_legend()
 	cout << HELP_DELETE;
 	cout << HELP_LOGOUT;
 	cout << HELP_HELP;
+	cout << "-----------------------------------------------------------\n";
+	cout << "------------------- USEFUL INFORMATION --------------------\n";
+	cout << "File names may have a maximum size of " << MAX_DIM_FILE_NAME << " characters.\n";
+    cout << "File names containing space are not allowed.\n";
+    cout << "Files will be searched in the folder '/ClientFiles/Dedicated_Storage/username'.\n";
 	cout << "-----------------------------------------------------------\n\n";
 }
 // ------------------------------- end: general function -------------------------------
@@ -325,9 +330,6 @@ void send_rename_request(unsigned char* session_key, char* old_file_name, char* 
         unsigned int old_n_len = strlen(old_file_name) + 1;     // take old file name len
         unsigned int new_n_len = strlen(new_file_name) + 1;     // take new file name len
         
-        cout << "+++++++++ " << "old file name size: " << old_n_len << "\n";
-        cout << "+++++++++ " << "new file name size: " << new_n_len << "\n";
-        
         // -- set the message to ecnrypt
     	msg_len = old_n_len + new_n_len;			            // update msg_len
     	message = (unsigned char*)malloc(msg_len);              // allocate       
@@ -350,7 +352,6 @@ void send_rename_request(unsigned char* session_key, char* old_file_name, char* 
         	error("Error in send_rename_request: buffer Malloc error.\n");
         	
         aad_len = sizeof(unsigned int)*3;
-        cout << "+++++++++ " << "aad_len size: " << aad_len << "\n";
         
         // -- encrypt the message, cmd_code for the rename operation is 4
     	ret = encryptor(cmd_code,aad, aad_len, message, msg_len, session_key, buffer);
@@ -625,7 +626,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
     string f_n = file_name;    		// string for file name
     string path;                    // string for complete path of the specified file
     long long file_size = 0;	    // contain the size of the file to be uploaded
-    FILE* file_up;				    // file to be uploaded
+    FILE* file_up = 0;				// file to be uploaded
     bool ov_size = false;           // in case of big size to upload
     long long ret;
     
@@ -671,7 +672,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
     	msg_len = strlen(file_name) + 1;			   // update msg_len
     	message = (unsigned char*)malloc(sizeof(long long) + msg_len);     // allocate       
     	if(!message)
-          	error("Error in send_delete_request: message Malloc error.\n");
+          	error("Error in send_upload_request: message Malloc error.\n");
         memcpy(message, (unsigned char*)&file_size, sizeof(long long));           // copy the file size in message
     	memcpy(message + sizeof(long long), file_name, msg_len);           // copy the file name in message
     	msg_len += sizeof(long long);		// update msg_len (now include the dimension of the file_size and the dimension of the file_name)
@@ -679,13 +680,13 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
     	// -- set aad (client nonce)
     	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
     	if(!aad)
-        	error("Error in send_delete_request: aad Malloc error.\n");
+        	error("Error in send_upload_request: aad Malloc error.\n");
     	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
     	
     	// -- buffer 
     	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
     	if(!buffer)
-        	error("Error in send_delete_request: buffer Malloc error.\n");
+        	error("Error in send_upload_request: buffer Malloc error.\n");
     	
     	// -- encrypt the message, cmd_code for the list operation is 2
     	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
@@ -700,7 +701,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
         free(message);     // free the buffer containing the cleartext message (file_name)
        	message = (unsigned char*)malloc(MAX_SIZE);
        	if(!message)
-             	error("Error in send_delete_request: message Malloc error.\n");
+             	error("Error in send_upload_request: message Malloc error.\n");
     	
     	// 2) receive mex from the server
     	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
@@ -734,7 +735,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
     		}      // end: if for decryptor ret check of the first message received from server 
     		else
         	{      // start: else for decryptor ret check of the first message received from server 
-            	cerr << "Error in send_delete_request: decrypt error.\n";
+            	cerr << "Error in send_upload_request: decrypt error.\n";
             	cerr << upload_failed;
             	return;    // return to manin loop
         	}      // end: else for decryptor ret check of the first message received from server 
@@ -748,7 +749,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
             // -- set aad (client nonce). It does not change depending on the size of the file.
         	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
         	if(!aad)
-            	error("Error in send_delete_request: aad Malloc error.\n");
+            	error("Error in send_upload_request: aad Malloc error.\n");
         	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
         	
         	// -- buffer: will contain the whole packet to be sent, it's size depends on file size
@@ -774,7 +775,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
                     // -- one cycle -- set the message to ecnrypt
                     message = (unsigned char*)malloc(file_size);     // allocate       
                 	if(!message)
-                      	error("Error in send_delete_request: message Malloc error.\n");
+                      	error("Error in send_upload_request: message Malloc error.\n");
                      
                     file_up = fopen (path.c_str(),"rb");		// open the file
               		if (!file_up) 				
@@ -795,7 +796,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
                     // message buffer will not be used
                     message = (unsigned char*)malloc(1);     // allocate       
                 	if(!message)
-                      	error("Error in send_delete_request: message Malloc error.\n");
+                      	error("Error in send_upload_request: message Malloc error.\n");
                       	
                     file_up = fopen (path.c_str(),"rb");		// open the file
               		if (!file_up) 				
@@ -812,7 +813,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
                 // -- set the message to ecnrypt
                 message = (unsigned char*)malloc(MAX_SIZE);     // allocate       
             	if(!message)
-                  	error("Error in send_delete_request: message Malloc error.\n");
+                  	error("Error in send_upload_request: message Malloc error.\n");
                   	
                 file_up = fopen (path.c_str(),"rb");		// open the file
           		if (!file_up) 				
@@ -850,7 +851,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
         	free(buffer);      // free buffer containing the encrypted message
         	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
         	if(!buffer)
-            	error("Error in send_delete_request: buffer Malloc error.\n");
+            	error("Error in send_upload_request: buffer Malloc error.\n");
               	
             // 4) receive response from the server
             msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
@@ -919,7 +920,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
     string f_n = file_name;    		// string for file name
     string path;                    // string for complete path of the specified file
     long long file_size = 0;	    // contain the size of the file to be uploaded
-    FILE* file_dw;				    // file to be downloaded
+    FILE* file_dw = 0;				// file to be downloaded
     bool ov_size = false;           // in case of big size to 
     long long ret;
     
@@ -952,19 +953,19 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
         msg_len = strlen(file_name) + 1;			   // update msg_len
     	message = (unsigned char*)malloc(msg_len);     // allocate       
     	if(!message)
-          	error("Error in send_delete_request: message Malloc error.\n");
+          	error("Error in send_download_request: message Malloc error.\n");
     	memcpy(message, file_name, msg_len);           // copy the file name in message
         
         // -- set aad (client nonce)
     	unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the client nonce
     	if(!aad)
-        	error("Error in send_delete_request: aad Malloc error.\n");
+        	error("Error in send_download_request: aad Malloc error.\n");
     	memcpy(aad,(unsigned char*)&client_counter,sizeof(unsigned int));   // copy client nonce in aad
         
         // -- buffer 
     	unsigned char* buffer = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
     	if(!buffer)
-        	error("Error in send_delete_request: buffer Malloc error.\n");
+        	error("Error in send_download_request: buffer Malloc error.\n");
         
         // -- encrypt the message, cmd_code for the list operation is 2
     	ret = encryptor(cmd_code,aad, sizeof(unsigned int), message, msg_len , session_key, buffer);
@@ -979,7 +980,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
         free(message);     // free the buffer containing the cleartext message (file_name)
        	message = (unsigned char*)malloc(MAX_SIZE);
        	if(!message)
-             	error("Error in send_delete_request: message Malloc error.\n");
+             	error("Error in send_download_request: message Malloc error.\n");
         
         // 2) receive mex from the server that indicates the dimension of the file or an error
     	msg_len = receive_msg(socket_server, buffer);           // receive confirmation or not
@@ -1300,7 +1301,7 @@ void read_command(char* username, unsigned char* session_key)
                      else
                      {
                          sscanf(parameters[0], "%s", file_name);     // take file name
-                         send_download_request(session_key, file_name, username);	// start the upload operation
+                         send_download_request(session_key, file_name, username);	// start the download operation
                      }
                  }
                  else
@@ -1655,17 +1656,17 @@ void start_authenticated_conn(unsigned char* buffer, unsigned char* mex_buffer, 
 		if (ret >= 0)                         // correctly decrypted 
 		{
     		// check the cmd_code received
-    		if ((cmd_code != -1) && (cmd_code == 1))      // all is ok
+    		if ((cmd_code != -1) && (cmd_code == 1))   // all is ok
     		{
-        		cout << aut_encr_conn_succ;          // print for user, message of successful authenticated and protected connection between client and server
-        		print_command_legend();              // cout all avaible command and their explanations
-        		print_files_list(mex_buffer, ret);   // print the list of the user file stored in the server 
+        		cout << aut_encr_conn_succ;            // print for user, message of successful authenticated and protected connection between client and server
+        		print_command_legend();                // cout all avaible command and their explanations
+        		print_files_list(mex_buffer, ret);     // print the list of the user file stored in the server 
     		}
-    		else if (cmd_code == -1)                      // error message
+    		else if (cmd_code == -1)                   // error message
     		{
-    			memcpy(mex_buffer + ret - 1, "\0", 1);	// for secure
-            	cerr << mex_buffer;                  // print the error message
-            	// +++++++++++++++++++++++++++ close connection +++++++++++++++++++
+    			memcpy(mex_buffer + ret - 1, "\0", 1); // for secure
+            	cerr << mex_buffer;                    // print the error message
+            	quit_program();                        // close connection
     		}
 		}
 	}
@@ -1715,13 +1716,19 @@ void open_server_connection(char* ip_server, int server_port)
         error("Errore nella \"connect()\":");                  // connection error
 }
 
-// only for test ourpose
+/*
+    Description: only for test purpose
+    	function to enter the password for the client's private key automatically, used to speed up testing. 
+    	In the delivered code the function will be commented out but not removed so that users can do testing faster. 
+    	The password should be entered only when you want to initiate a secure connection with a client. 
+*/
 int pass_cb(char *buf, int size, int rwflag, void *u)
 {
 	int len;
 
-    /* get pass phrase, length 'len' into 'tmp' */
-    char tmp[] = "!UserA_Psw!";
+    char tmp[] = "!UserA_Psw!";     // psw for the UserA
+    //char tmp[] = "!UserB_Psw!";     // psw for the UserB
+    //char tmp[] = "!UserC_Psw!";     // psw for the UserC
     len = strlen(tmp);
 
     if (len <= 0) 
@@ -1758,7 +1765,7 @@ EVP_PKEY* check_username(char* username, char* username_buffer , int buffer_len)
 	    error("User does not have a key file. The user is not signed or the username isn't correct.\n");
 
 	//user_key = PEM_read_PrivateKey(file, NULL, NULL, NULL);    // read the privk
-	user_key = PEM_read_PrivateKey(file, NULL, pass_cb, NULL);    // read the privk
+	user_key = PEM_read_PrivateKey(file, NULL, pass_cb, NULL);    // read the privk -- only for test purpose --
 	if(!user_key) 
     	error("user_key Error\n");
 	fclose(file);                                              // close the file containing the privk
@@ -1814,8 +1821,7 @@ int main(int argc, char *argv[])
     start_authenticated_conn(buffer, message, username, user_key, aad, session_key);
     
     cout << mex_ready_command;              // show to user that the command line is ready to take commands
-    
-    int i = 1;                  // take the cmd_code of the command entered by user
+        
     // main while, 
     while(1)
     {

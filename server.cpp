@@ -38,7 +38,8 @@ struct User
 	bool online = false;                // indicates if the user is connected to the server
 };
 
-list<User> users;                           // list of the users signed in the server
+list<User> users;                       // list of the users signed in the server
+unsigned int online_users = 0;          // indicate the number of user that are online
 
 // struct to contain utility parameter for one client connection
 struct Args
@@ -55,10 +56,13 @@ string mex_close_conn_succ = "Successfully closed the secure and authenticated c
 string mex_del_op = " file found in the cloud. Do you want to delete it?\nEnter y for confirm\nEnter n for denied.\n";    // message to be shown to confirm request in delete operation
 // Error message when verifying the username when closing the connection
 string mex_close_conn_err =  "ERROR: The username sent in the closing request does not match the user served. The connection will be closed..\n";
-string mex_user_file_list_err = "ERROR: The username sent in the file list request does not match the user served.\n"; // Error message when verifying the username when retrieve the user file list
+string mex_user_file_list_err = "ERROR: The username sent in the file list request does not match the user served.\n";  // Error message when verifying the username when retrieve the user file list
+string receive_err_code = "ERROR: In this protocol, the server cannot receive error messages from the client.\n";       // Error message when server receive cmd_code = -1 (error mex)
+string receive_wrong_cmd_code = "ERROR: received unknown cmd_code value.\n";                                    // Error message when the server receives a unknown cmd_code value
 
 // semaphores
 pthread_mutex_t users_mutex;            // semaphore for list<User> users
+pthread_mutex_t online_users_mutex;            // semaphore for online_users
            
 
 // ------------------------------- end: struct and global variables -------------------------------
@@ -123,14 +127,13 @@ EVP_PKEY* get_server_private_key()
     	error("Error in opening the server private key pem file.\n");
 	
 	//s_privk = PEM_read_PrivateKey(s_key_file, NULL, NULL, NULL);    	// read server private key
-	s_privk = PEM_read_PrivateKey(s_key_file, NULL, pass_cb, NULL);    	// read server private key (in authomatic way)
+	s_privk = PEM_read_PrivateKey(s_key_file, NULL, pass_cb, NULL);    	// read server private key (in authomatic way) -- only for test purpose
 	if(!s_privk) 
     	error("Error in PEM_read_PrivateKey returned NULL.\n");
 	fclose(s_key_file);                                             	// close server private key file
 	
 	return s_privk;        // return server private key
 }
-
 // ------------------------------- end: general function -------------------------------
 
 // ------------------------------- start: semaphore management functions -------------------------------
@@ -141,6 +144,10 @@ void semaphores_init()
 	{
     	error("Error in the initialization of the semaphore for the user list.\n");    // error in the creation of the semaphore
 	}
+	if (pthread_mutex_init(&online_users_mutex , NULL) != 0)          // initialize mutex for the online user
+	{
+    	error("Error in the initialization of the semaphore for the online user.\n");  // error in the creation of the semaphore
+	}
 }
 
 //    Description:  function to destroy the semaphores
@@ -149,6 +156,10 @@ void semaphores_destroy()
     if (pthread_mutex_destroy(&users_mutex) != 0)        // destroy mutex for the users list
     {
         error("Error in the destruction of the semaphore for the user list.\n");     // error in the destruction of the semaphore
+	}
+	if (pthread_mutex_destroy(&online_users_mutex) != 0)        // destroy mutex for the online user
+    {
+        error("Error in the destruction of the semaphore for the online user.\n");   // error in the destruction of the semaphore
 	}
 }
 // ------------------------------- end: semaphore management functions -------------------------------
@@ -228,8 +239,6 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
     	memcpy(message + msg_len - 1, "\0", 1);       
     }
     
-    cout << "++++++ user_file_list message: " << message << "\n";      // +++++++++++++ test mode +++++++++++++
-    
     // send message
     unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
 	if(!aad)
@@ -269,7 +278,7 @@ void send_user_file_list(int socket, User* current_user, unsigned char* session_
 */
 void handle_user_file_list_req(int socket, User* current_user, unsigned char* session_key, unsigned char* rec_username, unsigned int rec_username_size)
 {
-    unsigned char* message;         // contain the message to be sent
+    unsigned char* message = 0;     // contain the message to be sent
     unsigned int msg_len = 0;       // len of the message sent or received
     int ret;
     short cmd_code = 1;
@@ -321,7 +330,7 @@ void handle_user_file_list_req(int socket, User* current_user, unsigned char* se
     Description:  
         function that handle the user's request to rename one file in its dedicated storage (folder)
     Parameters:
-        - socket: client socket to send the list
+        - socket: client socket
         - current_user: reference to the user
         - session_key: the symmetric session key between the client and the server
         - buffer: buffer that contain all the received message
@@ -357,13 +366,9 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         unsigned int new_n_len;     // take new file name len
         
         aad_len = *(unsigned int*)(buffer + MSG_AAD_OFFSET - sizeof(unsigned int)) ;
-        cout << "+++++++++ " << "aad size: " << aad_len << " cleartext size: " << cleartext_size << "\n";
         
         old_n_len =*(unsigned int*)(buffer + MSG_AAD_OFFSET + sizeof(unsigned int));   //take the received client nonce
         new_n_len =*(unsigned int*)(buffer + MSG_AAD_OFFSET + sizeof(unsigned int) + sizeof(unsigned int));   //take the received client nonce
-        
-        cout << "+++++++++ " << "old file name size: " << old_n_len << " sizeoff: " << sizeof(unsigned int) << "\n";
-        cout << "+++++++++ " << "new file name size: " << new_n_len << " sizeoff: " << sizeof(unsigned int) << "\n";
         
         char* old_file_name = (char*)malloc(old_n_len);    // buffer for old file name
         char* new_file_name = (char*)malloc(new_n_len);    // buffer for new file name
@@ -374,12 +379,11 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         string old_s = old_file_name;   // string to contain the old file name
         string new_s = new_file_name;   // string to contain the new file name
         
-        cout << "+++++++++ " << "old file name: " << old_file_name << " " << old_s << "\n";
-        cout << "+++++++++ " << "new file name: " << new_file_name << " " << new_s << "\n";
-        
         // white list control
         if ( check_file_name(old_s) && check_file_name(new_file_name))
         {
+            cout << "User: " << current_user->username << " want rename the file '" << old_s << "' as '" << new_s << "'.\n"
+            
             // strings are correct
             string old_path = ded_store_path + current_user->username + "/" + old_file_name;
             // -- verify that the file with the old file name exist, if exist return 0 otherwhise return -1
@@ -458,13 +462,13 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
     // -- set aad (nonce)
     unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
 	if(!aad)
-        error("Error in user_file_list: aad Malloc error.\n");
+        error("Error in handle_rename_req: aad Malloc error.\n");
     memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
 	
 	// -- set buffer
 	unsigned char* buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
 	if(!buff)
-    	error("Error in user_file_list: buff Malloc error.\n");
+    	error("Error in handle_rename_req: buff Malloc error.\n");
     
     // encrypt message
     ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buff);
@@ -507,7 +511,28 @@ void set_user_offline(char* username)
     Description:  
         function that close the connection with an user
     Parameters:
-        - socket: client socket to send the list
+        - socket: client socket
+        - username: the username of the user connected
+*/
+void quit_conn(int socket, char* username)
+{
+    set_user_offline(current_user->username);       // set user as offline in the users list
+    
+    pthread_mutex_lock(&online_users_mutex);   // lock online_users mutex
+    online_users--;                 // update the counter of online users
+    pthread_mutex_unlock(&online_users_mutex); // unlock online_users mutex
+    
+    // close connection
+    close(socket);         // close the socket
+    pthread_exit(NULL);    // terminate the thread
+    return;
+}
+
+/*
+    Description:  
+        function that close the connection with an user
+    Parameters:
+        - socket: client socket
         - current_user: reference to the user
         - session_key: the symmetric session key between the client and the server
         - rec_username: the received username
@@ -520,6 +545,8 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
     int ret;
     short cmd_code = 0;
     char* rec_user = (char*)rec_username;
+    
+    cout << "The user: " << current_user->username << " want close the connection with the server.\n";
     
     // check the received username
     if( (rec_username_size < USERNAME_SIZE) && (strcmp(rec_user, current_user->username) == 0))     // received username equal to the username of current user
@@ -563,9 +590,6 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
 		// no further messages will be sent for this session.
 	}
     
-    // set user as offline in the users list
-    set_user_offline(current_user->username);
-    
     cout << "The thread that serves the user: " << current_user->username << " has completed its task, connection closed.\n";
     // free all
     free(session_key);     // free the session key	
@@ -573,10 +597,7 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
 	free(message);         // free the buffer containing the cleartext message (user file list)
 	free(aad);             // free aad 8in this case the server nonce
 	
-	// close connection
-	close(socket);         // close the socket
-	pthread_exit(NULL);    // terminate the thread
-	return;
+	quit_conn(socket, current_user->username);     // quit connection
 }
 
 /*
@@ -619,8 +640,6 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
     {
         // 1) receive user request and verify
         // -- verify the file name 
-        cout << "+++++++++ " << "file name: " << file_name << "\n";
-        
         // white list control
         if (check_file_name(file_name))     // name is OK
         {
@@ -660,7 +679,6 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
            	memcpy(message, temp, msg_len);         // copy in message
         }
     
-        cout << "+++++++++ " << "Message in the response: " << message << "\n";     // +++++++++++++++++++++++++++++
         // 2) send to the user the delete confirmation
         // -- set aad (nonce)
         unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
@@ -723,7 +741,7 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
         	{
         		// -- check if the user confirm or not the delete
 		    	char choice =*(char*)(message);
-		    	cout << "+++++++++ " << "user response: " << choice << "\n";     // +++++++++++++++++++++++++++++
+
 		    	if((choice == 'y') || (choice == 'Y'))         // user confirm delete 
 		    	{
 		        	// delete the file 
@@ -748,6 +766,8 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
 		                   	error("Error in handle_delete_req: send_mex Malloc error.\n");
 		               	memcpy(send_mex, temp, msg_len);         // copy in message
 		        	}
+		        	
+		        	cout << "Delete operation of the file: " << file_name << " for the user: " << current_user->username << " successfully performed.\n";
 		    	}
 		    	else if((choice == 'n') || (choice == 'N'))     // user doesn't confirm delete
 		    	{
@@ -860,7 +880,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
         msg_len = strlen(temp) + 1;       // update msg_len
        	message = (unsigned char*)malloc(msg_len);
        	if(!message)
-           	error("Error in handle_delete_req: message Malloc error.\n");
+           	error("Error in handle_upload_req: message Malloc error.\n");
        	memcpy(message, temp, msg_len);         // copy in message
     }       // end: if to check file name
     else if ( file_size >= MAX_FILE_SIZE)   // check if the size of the file received is valid or too big
@@ -871,7 +891,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
         msg_len = strlen(temp) + 1;       // update msg_len
        	message = (unsigned char*)malloc(msg_len);
        	if(!message)
-           	error("Error in handle_delete_req: message Malloc error.\n");
+           	error("Error in handle_upload_req: message Malloc error.\n");
        	memcpy(message, temp, msg_len);         // copy in message
     }
     else    // start: else, file name and size ok
@@ -891,7 +911,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
                 msg_len = strlen(temp.c_str()) + 1;       // update msg_len
                	message = (unsigned char*)malloc(msg_len);
                	if(!message)
-                   	error("Error in handle_delete_req: message Malloc error.\n");
+                   	error("Error in handle_upload_req: message Malloc error.\n");
                	memcpy(message, temp.c_str(), msg_len);         // copy in message
             }                           
             else        // the file to be uploaded there already is
@@ -902,7 +922,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
                 msg_len = strlen(temp) + 1;       // update msg_len
                	message = (unsigned char*)malloc(msg_len);
                	if(!message)
-                   	error("Error in handle_delete_req: message Malloc error.\n");
+                   	error("Error in handle_upload_req: message Malloc error.\n");
                	memcpy(message, temp, msg_len);         // copy in message
             }
         }               // end: if, name is OK (white list control)
@@ -914,7 +934,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
             msg_len = strlen(temp) + 1;       // update msg_len
            	message = (unsigned char*)malloc(msg_len);
            	if(!message)
-               	error("Error in handle_delete_req: message Malloc error.\n");
+               	error("Error in handle_upload_req: message Malloc error.\n");
            	memcpy(message, temp, msg_len);         // copy in message
         }           // end: else, name isn't ok (white list control)
         
@@ -923,16 +943,14 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
         // -- set aad (nonce)
         unsigned char* aad = (unsigned char*)malloc(sizeof(unsigned int));  // in this case aad is only the server nonce
     	if(!aad)
-            error("Error in handle_delete_req: aad Malloc error.\n");
+            error("Error in handle_upload_req: aad Malloc error.\n");
         memcpy(aad,(unsigned char*)&current_user->server_counter,sizeof(unsigned int));  // copy server nonce in aad
     	
     	// -- set buffer
     	unsigned char* buff = (unsigned char*)malloc(MAX_SIZE);      // temp buffer for message 
     	if(!buff)
-        	error("Error in handle_delete_req: buff Malloc error.\n");
-        
-        cout << "+++++++++ " << "Message in the response: " << message << "\n";     // +++++++++++++++++++++++++++++
-        
+        	error("Error in handle_upload_req: buff Malloc error.\n");
+       
         // encrypt message (small size message)
         ret = encryptor(cmd_code, aad, sizeof(unsigned int), message, msg_len , session_key, buff);
     	if (ret >= 0)      // successfully encrypted
@@ -1026,7 +1044,6 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
         	
         	if (ret >= 0)                         // correctly decrypted 
     		{                 // start: if cehck decrypt
-    		
         		// check the cmd_code received
         		if ((cmd_code != -1) && (cmd_code == 2))  // all is ok
         		{
@@ -1051,6 +1068,8 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
                  	if(!send_mex)
                      	error("Error in handle_upload_req: message Malloc error.\n");
                  	memcpy(send_mex, temp, msg_len);         // copy in message
+                 	
+                 	cout << "User: " << current_user->username <<" successfully uploaded  file '" << file_name << "' on the server. Uploaded " << file_size << " Bytes.\n";
         		}
         		else if (cmd_code == -1)                  // error message
         		{
@@ -1113,8 +1132,6 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     	if(!buff)
         	error("Error in handle_delete_req: buff Malloc error.\n");
         
-        cout << "+++++++++ " << "Message in the response: " << send_mex << "\n";     // +++++++++++++++++++++++++++++
-        
         // encrypt message
         ret = encryptor(cmd_code, aad, sizeof(unsigned int), send_mex, msg_len , session_key, buff);
     	if (ret >= 0)      // successfully encrypted
@@ -1135,7 +1152,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     Description:  
         function that handle the user's request download one file in its dedicated storage (folder)
     Parameters:
-        - socket: client socket to send the list
+        - socket: client socket
         - current_user: reference to the user
         - session_key: the symmetric session key between the client and the server
         - cleartext: the received cleartext (in this case file_name)
@@ -1547,7 +1564,10 @@ void *client_handler(void* arguments)
     if (temp_curr_user_online)          
     {
         cerr << "Error in the connection establishment: user is already online.\n";
-        return NULL;       // ++++++++++++++++++++++ to modify for close connection  ++++++++++++++++++++++
+        // close connection
+    	close(socket);         // close the socket
+    	pthread_exit(NULL);    // terminate the thread
+    	return;
     }
     
 	// -- username is correct and user is not online
@@ -1555,6 +1575,10 @@ void *client_handler(void* arguments)
 	args->user_ref = current_user;
 	current_user->online = true;
 	pthread_mutex_unlock(&users_mutex);            // unlock users_mutex
+	
+	pthread_mutex_lock(&online_users_mutex);   // lock online_users mutex
+    online_users++;                 // update the counter of online users
+    pthread_mutex_unlock(&online_users_mutex); // unlock online_users mutex
 	
 	// -- retrieve public key of te user
 	EVP_PKEY* client_pubk = retrieve_user_pubk((std::string)username);	
@@ -1564,7 +1588,7 @@ void *client_handler(void* arguments)
 	if(ret < 0)
 	{
     	cerr << "Error in the connection establishment: invalid client signature.\n";
-    	return NULL;       // ++++++++++++++++++++++ to modify for close connection  ++++++++++++++++++++++
+    	quit_conn(socket, current_user->username);     // close connection
 	}
 	
 	// -- store received nonce
@@ -1645,7 +1669,7 @@ void *client_handler(void* arguments)
 	if(memcmp(buffer + signature_size, my_nonce, NONCE_SIZE) != 0)
 	{
     	cerr << "Error in the connection establishment: nonce received is not valid.\n";
-    	return NULL;       // ++++++++++++++++++++++ to modify for close connection  ++++++++++++++++++++++
+    	quit_conn(socket, current_user->username);     // close connection
     }
 	
 	// -- verify client signature in message there will be ( server nonce | ECDH client pubk)
@@ -1653,7 +1677,7 @@ void *client_handler(void* arguments)
 	if(msg_size <= 0)
 	{
     	cerr << "Error in the connection establishment: invalid client signature.\n";
-    	return NULL;       // ++++++++++++++++++++++ to modify for close connection  ++++++++++++++++++++++
+    	quit_conn(socket, current_user->username);     // close connection
 	}
 	
 	// -- get ECDH client public key from client
@@ -1731,8 +1755,9 @@ void *client_handler(void* arguments)
         		// switch to see the cmd_code received and to perform the necessary operations to execute it.
         		switch(cmd_code)
         		{
-        		case -1:   //
+        		case -1:   // receive an error message
             		{
+                		cerr << string receive_err_code;
                 		break;
             		}
             	case 0:    // close connection request
@@ -1767,8 +1792,7 @@ void *client_handler(void* arguments)
                 	}
                 default:    // cmd_code incorrect or unrecognised
                     {
-                        // control print in the server
-                        // send error mex to the client
+                        cerr << receive_wrong_cmd_code; 
                         break;
                     }
         		}
@@ -1836,9 +1860,11 @@ int main(int argc, char *argv[])
     // Server in listening
     while(1)
     {
+        pthread_mutex_lock(&online_users_mutex);   // lock online_users mutex
         //Accept call creates a new socket and thread for the incoming connection
-    	if(users.size() < MAX_CLIENTS)		// check if 
+    	if(online_users < MAX_CLIENTS)		// check if 
     	{
+        	pthread_mutex_unlock(&online_users_mutex); // unlock online_users mutex
     	    int new_socket = accept(sock, (struct sockaddr *) &cli_addr, &clilen);
     	    if (new_socket < 0)
     	    { 
@@ -1863,6 +1889,8 @@ int main(int argc, char *argv[])
             		cerr << "Failed to create thread\n";
     	    }
     	}
+    	else
+        	pthread_mutex_unlock(&online_users_mutex); // unlock online_users mutex
     }
 }
 
