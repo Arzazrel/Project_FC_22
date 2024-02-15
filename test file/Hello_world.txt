@@ -1,0 +1,4 @@
+A small test size to test the applciation.
+I could have written 'hello world' but that would have been trivial.
+
+Hello to all readers!!!
