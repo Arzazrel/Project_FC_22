@@ -62,7 +62,7 @@ string receive_wrong_cmd_code = "ERROR: received unknown cmd_code value.\n";    
 
 // semaphores
 pthread_mutex_t users_mutex;            // semaphore for list<User> users
-pthread_mutex_t online_users_mutex;            // semaphore for online_users
+pthread_mutex_t online_users_mutex;     // semaphore for online_users
            
 
 // ------------------------------- end: struct and global variables -------------------------------
@@ -126,8 +126,8 @@ EVP_PKEY* get_server_private_key()
 	if(!s_key_file) 
     	error("Error in opening the server private key pem file.\n");
 	
-	//s_privk = PEM_read_PrivateKey(s_key_file, NULL, NULL, NULL);    	// read server private key
-	s_privk = PEM_read_PrivateKey(s_key_file, NULL, pass_cb, NULL);    	// read server private key (in authomatic way) -- only for test purpose
+	s_privk = PEM_read_PrivateKey(s_key_file, NULL, NULL, NULL);    	// read server private key
+	//s_privk = PEM_read_PrivateKey(s_key_file, NULL, pass_cb, NULL);    	// read server private key (in authomatic way) -- only for test purpose
 	if(!s_privk) 
     	error("Error in PEM_read_PrivateKey returned NULL.\n");
 	fclose(s_key_file);                                             	// close server private key file
@@ -144,7 +144,7 @@ void semaphores_init()
 	{
     	error("Error in the initialization of the semaphore for the user list.\n");    // error in the creation of the semaphore
 	}
-	if (pthread_mutex_init(&online_users_mutex , NULL) != 0)          // initialize mutex for the online user
+	if (pthread_mutex_init(&online_users_mutex , NULL) != 0)   // initialize mutex for the online user
 	{
     	error("Error in the initialization of the semaphore for the online user.\n");  // error in the creation of the semaphore
 	}
@@ -153,7 +153,7 @@ void semaphores_init()
 //    Description:  function to destroy the semaphores
 void semaphores_destroy()			
 {
-    if (pthread_mutex_destroy(&users_mutex) != 0)        // destroy mutex for the users list
+    if (pthread_mutex_destroy(&users_mutex) != 0)               // destroy mutex for the users list
     {
         error("Error in the destruction of the semaphore for the user list.\n");     // error in the destruction of the semaphore
 	}

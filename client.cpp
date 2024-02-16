@@ -1777,8 +1777,8 @@ EVP_PKEY* check_username(char* username, char* username_buffer , int buffer_len)
 	if(!file)                                              
 	    error("User does not have a key file. The user is not signed or the username isn't correct.\n");
 
-	//user_key = PEM_read_PrivateKey(file, NULL, NULL, NULL);    // read the privk
-	user_key = PEM_read_PrivateKey(file, NULL, pass_cb, NULL);    // read the privk -- only for test purpose --
+	user_key = PEM_read_PrivateKey(file, NULL, NULL, NULL);    // read the privk
+	//user_key = PEM_read_PrivateKey(file, NULL, pass_cb, NULL);    // read the privk -- only for test purpose --
 	if(!user_key) 
     	error("user_key Error\n");
 	fclose(file);                                              // close the file containing the privk
