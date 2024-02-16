@@ -166,8 +166,6 @@ bool check_file_name(const string& str, string prefix_path, bool both_control = 
 		    return false; 
 		}
 		
-		cout << "can_str: " << can_str << "\n";
-		
 		free(canon_str); 
     }
     

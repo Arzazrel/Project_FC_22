@@ -116,6 +116,7 @@ void print_files_list(unsigned char* buffer, unsigned int buffer_size)
 	cout << "Files stored on the server: \n";
 	memcpy(buffer + buffer_size - 1, "\0", 1);	  // for secure
 	cout << buffer << "\n";                       // print the list of file
+	cout << "--------------------------------------------------\n\n";
 }
 
 //    Description:  function to close connection and quite the program
@@ -188,12 +189,12 @@ void send_close_conn_request(char* username, unsigned char* session_key)
     		if ((cmd_code != -1) && (cmd_code == 0))  // all is ok
     		{
         		memcpy(message + ret - 1, "\0", 1);   // for secure
-            	cout << message;                      // print the error message
+            	cout << message <<"\n";               // print the error message
     		}
     		else if (cmd_code == -1)                  // error message
     		{
     			memcpy(message + ret - 1, "\0", 1);   // for secure
-            	cerr << message;                      // print the error message
+            	cerr << message <<"\n";               // print the error message
     		}
     		else
         		cerr << err_rec_cmd_code;             // error message
@@ -278,7 +279,7 @@ void send_list_request(char* username, unsigned char* session_key)
     		else if (cmd_code == -1)                  // error message
     		{
     			memcpy(message + ret - 1, "\0", 1);   // for secure
-            	cerr << message;                      // print the error message
+            	cerr << message <<"\n";               // print the error message
     		}
     		else
         		cerr << err_rec_cmd_code;             // error message
@@ -383,12 +384,12 @@ void send_rename_request(unsigned char* session_key, char* old_file_name, char* 
         		if ((cmd_code != -1) && (cmd_code == 4))  // all is ok
         		{
             		memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cout << message;                      // print the message
+                	cout << message <<"\n";               // print the message
         		}
         		else if (cmd_code == -1)                  // error message
         		{
         			memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cerr << message;                      // print the error message
+                	cerr << message <<"\n";               // print the error message
         		}
         		else
             		cerr << err_rec_cmd_code;             // error message
@@ -509,7 +510,7 @@ void send_delete_request(unsigned char* session_key, char* file_name)
         		else if (cmd_code == -1)                  // error message
         		{
         			memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cerr << message;                      // print the error message
+                	cerr << message <<"\n";                      // print the error message
                 	return;            // delete operation failed
         		}
         		else
@@ -577,12 +578,12 @@ void send_delete_request(unsigned char* session_key, char* file_name)
             		if ((cmd_code != -1) && (cmd_code == 5))  // all is ok
             		{
                 		memcpy(message + ret - 1, "\0", 1);   // for secure
-                    	cout << message;                      // print the message
+                    	cout << message <<"\n";               // print the message
             		}
             		else if (cmd_code == -1)                  // error message
             		{
             			memcpy(message + ret - 1, "\0", 1);   // for secure
-                    	cerr << message;                      // print the error message
+                    	cerr << message <<"\n";               // print the error message
                     	return;            // delete operation failed
             		}
             		else
@@ -651,7 +652,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
         
         if(access(path.c_str(), F_OK ) != 0)         // if exist return 0 otherwhise return -1
         {
-        	cerr << "The specified file" << path << " is not present, upload finished before sending the request to the server.\n";
+        	cerr << "The specified file" << f_n << " is not present, upload finished before sending the request to the server.\n";
         	return;		// return to main loop
         }
         // -- check file dimension
@@ -661,7 +662,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
   		else                    // file successfully opened
   		{
     		file_size = get_file_size(path);        // get the file size
-    		cout << "The specified file '" << path << "' is large " << file_size << "Bytes.\n";   // print the files 
+    		cout << "The specified file '" << f_n << "' is large " << file_size << "Bytes.\n";   // print the files 
     		if ( file_size > MAX_FILE_SIZE )
         	{
             	cerr << upload_failed << "File too big.\n";
@@ -872,12 +873,12 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
             		if ((cmd_code != -1) && (cmd_code == 2))  // all is ok
             		{
                 		memcpy(message + ret - 1, "\0", 1);   // for secure
-                    	cout << message;                      // print the message
+                    	cout << message <<"\n";               // print the message
             		}
             		else if (cmd_code == -1)                  // error message
             		{
             			memcpy(message + ret - 1, "\0", 1);   // for secure
-                    	cerr << message;                      // print the error message
+                    	cerr << message <<"\n";               // print the error message
                     	return;            // delete operation failed
             		}
             		else
@@ -1015,7 +1016,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
         		else if (cmd_code == -1)                  // error message
         		{
         			memcpy(message + ret - 1, "\0", 1);   // for secure
-                	cerr << message << "\n";                      // print the error message
+                	cerr << message << "\n";              // print the error message
                 	return;            // delete operation failed
         		}
         		else
@@ -1131,7 +1132,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
             		else if (cmd_code == -1)                  // error message
             		{
             			memcpy(message + ret - 1, "\0", 1);   // for secure
-                    	cerr << message;                      // print the error message
+                    	cerr << message <<"\n";               // print the error message
                     	return;            // delete operation failed
             		}         
             		else

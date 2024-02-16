@@ -344,7 +344,7 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
     unsigned int aad_len;
     int ret;
     short cmd_code = 4;
-    string prefix = ded_store_path  + current_user->username + "/";				// the correct prefix that must have file paths
+    string prefix = ded_store_path + current_user->username + "/";				// the correct prefix that must have file paths
     
     cout << "Rename request arrived from user: " << current_user->username << ".\n";
     
@@ -383,17 +383,12 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         string old_path = ded_store_path + current_user->username + "/" + old_file_name;	// path of the old name
         string new_path = ded_store_path + current_user->username + "/" + new_file_name;	// path of the new name
         
-        cout << "Old path:" << old_path << "\n";
-        cout << "New path:" << new_path << "\n";
-        
         // white list control
-        if ( check_file_name(old_path, prefix) && check_file_name(new_path, prefix))
+        if ( check_file_name(old_path, prefix) && check_file_name(new_path, prefix, false))
         {
         	old_path = get_can_str(old_path, prefix);
-        	new_path = get_can_str(new_path, prefix);
         	
 			old_s = old_path.substr(prefix.length());		// ge the clear old file name
-			new_s = new_path.substr(prefix.length());		// ge the clear old file name
 			
             cout << "User: " << current_user->username << " want rename the file '" << old_s << "' as '" << new_s << "'.\n";
             
@@ -458,7 +453,7 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         {
             // set error mex
             cmd_code = -1;
-            char temp[] = "The file names passed did not pass the white list check, they have characters that are not allowed in them.\n";
+            char temp[] = "ERROR: the file names passed did not pass the white list check, they have characters that are not allowed in them or isn't present in the cloud (check with the list command the files saved in the server).\n";
             msg_len = strlen(temp) + 1;       // update msg_len
            	message = (unsigned char*)malloc(msg_len);
            	if(!message)
@@ -690,7 +685,7 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
         {
             // set error mex
             cmd_code = -1;
-            char temp[] = "Error: the file names passed did not pass the white list check, they have characters that are not allowed in them.\n";
+            char temp[] = "Error: the file names passed did not pass the white list check, they have characters that are not allowed in them or isn't present in the cloud (check with the list command the files saved in the server).\n";
             msg_len = strlen(temp) + 1;       // update msg_len
            	message = (unsigned char*)malloc(msg_len);
            	if(!message)
