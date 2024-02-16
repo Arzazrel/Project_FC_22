@@ -320,8 +320,8 @@ void send_rename_request(unsigned char* session_key, char* old_file_name, char* 
     string old_s = old_file_name;   // string to contain the old file name
     string new_s = new_file_name;   // string to contain the new file name
     
-    // checking the correctness of strings
-    if ( check_file_name(old_s) && check_file_name(new_s) )
+    // checking the correctness of strings, only the white list control
+    if ( check_file_name(old_s, " ", false) && check_file_name(new_s, " ", false) )
     {
         // strings are correct
         // 1) create and send the request to the server -> format is -> ( cmd_code | tag | IV | aad_len | aad (nonce, old_n_len, new_n_len) | ciphertext (old_file_name, new_file_name) )
@@ -431,8 +431,8 @@ void send_delete_request(unsigned char* session_key, char* file_name)
     
     string temp_f_n = file_name;   // string to contain the file name
     
-    // checking the correctness of strings
-    if ( check_file_name(temp_f_n) )
+    // checking the correctness of strings, only white list check
+    if ( check_file_name(temp_f_n, " ", false) )
     {
         // strings is correct, remove first part of the path
         //int pre_path_len = strlen(ded_store_path.c_str());
@@ -628,6 +628,7 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
     long long file_size = 0;	    // contain the size of the file to be uploaded
     FILE* file_up = 0;				// file to be uploaded
     bool ov_size = false;           // in case of big size to upload
+    string prefix = ded_store_path + username + "/";				// the correct prefix that must have file paths
     long long ret;
     
     // check the dimension fo a string
@@ -637,14 +638,17 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
         return;     
     }
     
-    string temp_f_n = file_name;   // string to contain the file name
+    //string temp_f_n = file_name;   // string to contain the file name
+    path = ded_store_path + username + "/" + f_n;	// take the path
     
     // checking the correctness of strings
-    if ( check_file_name(temp_f_n) )
+    if ( check_file_name(path, prefix) && (get_can_str(path, prefix) != " "))
     {
     	// 0) control check of the file to be uploaded on the server
     	// -- check if the file exist
-        path = ded_store_path + username + "/" + f_n;	// take the path
+        path = get_can_str(path, prefix);
+		f_n = path.substr(prefix.length());		// ge the clear file name
+        
         if(access(path.c_str(), F_OK ) != 0)         // if exist return 0 otherwhise return -1
         {
         	cerr << "The specified file" << path << " is not present, upload finished before sending the request to the server.\n";
@@ -669,12 +673,12 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
     	
     	// 1) create and send the request to the server -> format is -> ( cmd_code | tag | IV | aad_len | nonce | file_size | file_name )
     	// -- set the message to ecnrypt
-    	msg_len = strlen(file_name) + 1;			   // update msg_len
+    	msg_len = strlen(f_n.c_str()) + 1;			   // update msg_len
     	message = (unsigned char*)malloc(sizeof(long long) + msg_len);     // allocate       
     	if(!message)
           	error("Error in send_upload_request: message Malloc error.\n");
         memcpy(message, (unsigned char*)&file_size, sizeof(long long));           // copy the file size in message
-    	memcpy(message + sizeof(long long), file_name, msg_len);           // copy the file name in message
+    	memcpy(message + sizeof(long long), f_n.c_str(), msg_len);           // copy the file name in message
     	msg_len += sizeof(long long);		// update msg_len (now include the dimension of the file_size and the dimension of the file_name)
     	
     	// -- set aad (client nonce)
@@ -899,7 +903,15 @@ void send_upload_request(unsigned char* session_key, char* file_name, char* user
                 // end: else for nonce check of the first message received from server 
     }
     else        // else of the control of file name
-        cerr << delete_failed;
+    {
+    	if(access(path.c_str(), F_OK ) != 0)         // if exist return 0 otherwhise return -1
+        {
+        	cerr << "Because the specified file" << path << " is not present, upload finished before sending the request to the server.\n";
+        }
+        else
+        	cerr << delete_failed;
+    }
+        
 }
 
 
@@ -934,7 +946,7 @@ void send_download_request(unsigned char* session_key, char* file_name, char* us
     string temp_f_n = file_name;   // string to contain the file name
     
     // checking the correctness of strings
-    if ( check_file_name(temp_f_n) )
+    if ( check_file_name(temp_f_n, " ", false) )
     {       // start: if 1.0 (white list check)
         // 0) control check of the file to be downloaded from the server
         // -- check if the file exist

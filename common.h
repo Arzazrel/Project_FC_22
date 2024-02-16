@@ -112,10 +112,14 @@ long long get_file_size(string file_name)
         white listing to check that the string passed conforms to the security rules.
     Parameters:     
         - str: the string to be checked
+        - prefix_path: after canonicalizing the passed path you must verify that it is in the area where you want the client 
+        			   or server to operate at that time. The passed string 'prefix_path' must be present in the real path 
+        			   otherwise it will mean that the specified file is not in a correct area.
+        - both_control: indicates if you want to do both checks or just the check on the white list .default parameter = true
     Return:
         - true: if the string passes the control checks, false: if the string dosn't pass the control checks
 */
-bool check_file_name(const string& str)
+bool check_file_name(const string& str, string prefix_path, bool both_control = true)
 {
     // white list control
     // -- first control, check if the string is empty
@@ -132,33 +136,93 @@ bool check_file_name(const string& str)
         return false;
     }
     
-    // canonicalization
-    // realpath() fucntion -> expands all symbolic links and resolves references to /./, /../ and extra '/' characters
-    // split a username/
-    /*
-    char* canon_str = realpath(str.c_str(), NULL);      // get the real path 
-    if(!canon_str)          // error
+    if (both_control)
     {
-    	cerr << "Canonicalization failed.\n";
-    	return false; 
-    } 
-    // -- check that path is an allowed path, the files in the client must be in 
-    cout << "The canon string is: " << canon_str << "\n";
-    */
-    /*
-    // controllare prima che la prima parte sia da home
-    // prendere lunghezza della stringa iniziale e poi di quella canonicalizzata, la differenza delle dimensioni sarà
-    // quanto occupa la parte prima del nome del file. controllare che la parte prima corrisponda a /ClientFiles/username
-    
-    // check that directory is "/home" (in some systems this should be: "/home/<username>")
-    if(strncmp(canon_str2, "/home/", strlen("/home/")) != 0) 
-    { 
-        free(canon_str2); 
-        return false; 
-    } 
-    */
+    	// canonicalization
+		// realpath() fucntion -> expands all symbolic links and resolves references to /./, /../ and extra '/' characters
+		char* canon_str = realpath(str.c_str(), NULL);      // get the real path 
+		if(!canon_str)          // error
+		{
+			cerr << "Canonicalization failed.\n";
+			return false; 
+		} 
+		
+		// check that first directory is "/home" (in some systems this should be: "/home/<username>")
+		if(strncmp(canon_str, "/home/", strlen("/home/")) != 0) 
+		{
+			cerr << "ERROR: Invalid path. The specified path isn't in /home/.\n"; 
+		    free(canon_str); 
+		    return false; 
+		} 
+		
+		string can_str = canon_str;
+		// check if prefix_path is in canon string. prefix_path will be 'ServerFiles/Dedicated_Storage/username' or 'ClientFiles/Dedicated_Storage/'
+		if(can_str.find(prefix_path) == string::npos)     // if no such characters are found, the function returns string::npos.
+		{
+			cerr << "ERROR: Invalid path. The specified path isn't in the correct user folder.\n"; 
+		    cout << "Prefix: " << prefix_path << "\n";
+		    cout << "can_str: " << can_str << "\n";
+		    free(canon_str); 
+		    return false; 
+		}
+		
+		cout << "can_str: " << can_str << "\n";
+		
+		free(canon_str); 
+    }
     
     return true;
+}
+
+/*
+    Description: 
+        function to check filenames (or strings in general) passed as parameters. The function will use canonicalisation and 
+        white listing to check that the string passed conforms to the security rules.
+    Parameters:     
+        - str: the string to be checked
+        - prefix_path: after canonicalizing the passed path you must verify that it is in the area where you want the client 
+        			   or server to operate at that time. The passed string 'prefix_path' must be present in the real path 
+        			   otherwise it will mean that the specified file is not in a correct area.
+    Return:
+        - the canonicalizated string
+*/
+string get_can_str (const string& str, string prefix_path)
+{
+	string canon_ret;
+	
+	// canonicalization
+	char* canon_str = realpath(str.c_str(), NULL);      // get the real path 
+	if(!canon_str)          // error
+	{
+		cerr << "Canonicalization failed.\n";
+		canon_ret = " ";
+		return canon_ret;  
+	} 
+		
+	// check that first directory is "/home" (in some systems this should be: "/home/<username>")
+	if(strncmp(canon_str, "/home/", strlen("/home/")) != 0) 
+	{
+		cerr << "ERROR: Invalid path. The specified path isn't in /home/.\n"; 
+		free(canon_str); 
+	    canon_ret = " ";
+		return canon_ret; 
+	} 
+		
+	string can_str = canon_str;
+	
+	// check if prefix_path is in canon string. prefix_path will be 'ServerFiles/Dedicated_Storage/username' or 'ClientFiles/Dedicated_Storage/'
+	size_t found = can_str.find(prefix_path);
+	if(found == string::npos)     // if no such characters are found, the function returns string::npos.
+	{
+		cerr << "ERROR: Invalid path. The specified path isn't in the correct user folder.\n"; 
+		free(canon_str); 
+		canon_ret = " ";
+		return canon_ret; 
+	}
+
+  	canon_ret = can_str.substr(found);		// ge the clear file name
+	free(canon_str); 
+	return canon_ret;
 }
 
 // ------------------------------- end: function to canonicalization and command injection -------------------------------

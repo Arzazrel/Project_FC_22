@@ -344,6 +344,7 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
     unsigned int aad_len;
     int ret;
     short cmd_code = 4;
+    string prefix = ded_store_path  + current_user->username + "/";				// the correct prefix that must have file paths
     
     cout << "Rename request arrived from user: " << current_user->username << ".\n";
     
@@ -379,13 +380,24 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
         string old_s = old_file_name;   // string to contain the old file name
         string new_s = new_file_name;   // string to contain the new file name
         
+        string old_path = ded_store_path + current_user->username + "/" + old_file_name;	// path of the old name
+        string new_path = ded_store_path + current_user->username + "/" + new_file_name;	// path of the new name
+        
+        cout << "Old path:" << old_path << "\n";
+        cout << "New path:" << new_path << "\n";
+        
         // white list control
-        if ( check_file_name(old_s) && check_file_name(new_file_name))
+        if ( check_file_name(old_path, prefix) && check_file_name(new_path, prefix))
         {
-            cout << "User: " << current_user->username << " want rename the file '" << old_s << "' as '" << new_s << "'.\n"
+        	old_path = get_can_str(old_path, prefix);
+        	new_path = get_can_str(new_path, prefix);
+        	
+			old_s = old_path.substr(prefix.length());		// ge the clear old file name
+			new_s = new_path.substr(prefix.length());		// ge the clear old file name
+			
+            cout << "User: " << current_user->username << " want rename the file '" << old_s << "' as '" << new_s << "'.\n";
             
             // strings are correct
-            string old_path = ded_store_path + current_user->username + "/" + old_file_name;
             // -- verify that the file with the old file name exist, if exist return 0 otherwhise return -1
             if(access(old_path.c_str(), F_OK ) == -1)                                                 // target file control check
             {
@@ -401,7 +413,6 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
             else        // the file xist
             {
                 // verify that the file with the new file name exist, if exist return 0 otherwhise return -1
-                string new_path = ded_store_path + current_user->username + "/" + new_file_name;
                 if(access(new_path.c_str(), F_OK ) == -1)                                                 // target file control check
                 {
                     // the file dosn't exist, can rename the old file wih the new file
@@ -414,6 +425,8 @@ void handle_rename_req(int socket, User* current_user, unsigned char* session_ke
                        	if(!message)
                            	error("Error in handle_rename_req: message Malloc error.\n");
                        	memcpy(message, temp, msg_len);         // copy in message
+                       	
+                       	cout << "User: " << current_user->username << " successfully renamed the file '" << old_s << "' as '" << new_s << "'.\n\n";
                     }
                     else            // rename failed
                     {
@@ -516,7 +529,7 @@ void set_user_offline(char* username)
 */
 void quit_conn(int socket, char* username)
 {
-    set_user_offline(current_user->username);       // set user as offline in the users list
+    set_user_offline(username);       // set user as offline in the users list
     
     pthread_mutex_lock(&online_users_mutex);   // lock online_users mutex
     online_users--;                 // update the counter of online users
@@ -590,7 +603,7 @@ void close_user_conn(int socket, User* current_user, unsigned char* session_key,
 		// no further messages will be sent for this session.
 	}
     
-    cout << "The thread that serves the user: " << current_user->username << " has completed its task, connection closed.\n";
+    cout << "The thread that serves the user: " << current_user->username << " has completed its task, connection closed.\n\n";
     // free all
     free(session_key);     // free the session key	
     free(buffer);          // free buffer containing the encrypted message
@@ -621,6 +634,7 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
     memcpy(temp_f_n, cleartext, cleartext_size);       // copy in message
     string file_name = temp_f_n;    // string for file name
     string path;                    // string for complete path of the specified file
+    string prefix = ded_store_path  + current_user->username + "/";				// the correct prefix that must have file paths
     
     cout << "Delete request arrived from user: " << current_user->username << ".\n";
     
@@ -640,20 +654,25 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
     {
         // 1) receive user request and verify
         // -- verify the file name 
+        path = ded_store_path + current_user->username + "/" + file_name;
         // white list control
-        if (check_file_name(file_name))     // name is OK
+        if (check_file_name(path, prefix))     // name is OK
         {
+        	path = get_can_str(path, prefix);
+        	
+        	file_name = path.substr(prefix.length());		// ge the clear old file name
             // -- check if exist the specified file
-            path = ded_store_path + current_user->username + "/" + file_name;
             if(access(path.c_str(), F_OK ) == 0)         // if exist return 0 otherwhise return -1
             {
                 // set the message for the confirm or not
-                string temp = temp_f_n + mex_del_op;
+                string temp = file_name + mex_del_op;
                 msg_len = strlen(temp.c_str()) + 1;       // update msg_len
                	message = (unsigned char*)malloc(msg_len);
                	if(!message)
                    	error("Error in handle_delete_req: message Malloc error.\n");
                	memcpy(message, temp.c_str(), msg_len);         // copy in message
+               	
+               	cout << "User: " << current_user->username << " want delete the file '" << file_name << "' .\n";
             }
             else        // the file to be deleted there isn't
             {
@@ -754,6 +773,8 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
 		               	if(!send_mex)
 		                   	error("Error in handle_delete_req: send_mex Malloc error.\n");
 		               	memcpy(send_mex, temp, msg_len);         // copy in message
+		               	
+		               	cout << "Delete operation of the file: " << file_name << " for the user: " << current_user->username << " successfully performed.\n\n";
 		            }
 		        	else       // delete failed
 		        	{
@@ -766,8 +787,6 @@ void handle_delete_req(int socket, User* current_user, unsigned char* session_ke
 		                   	error("Error in handle_delete_req: send_mex Malloc error.\n");
 		               	memcpy(send_mex, temp, msg_len);         // copy in message
 		        	}
-		        	
-		        	cout << "Delete operation of the file: " << file_name << " for the user: " << current_user->username << " successfully performed.\n";
 		    	}
 		    	else if((choice == 'n') || (choice == 'N'))     // user doesn't confirm delete
 		    	{
@@ -861,6 +880,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     long long file_size = 0;	// contain the size of the file to be uploaded
     FILE* file_up;				    // file to be uploaded
     bool ov_size = false;           // in case of big size to upload
+    string prefix = ded_store_path  + current_user->username + "/";				// the correct prefix that must have file paths
     long long ret;
 
     // cleartext file is composed by ( unsigned long | file name)
@@ -900,10 +920,10 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
     
         // 1) receive user request and verify
         // -- verify the file name -> white list control
-        if (check_file_name(file_name))     // start: if, name is OK (white list control)
+        path = ded_store_path + current_user->username + "/" + file_name;
+        if (check_file_name(path, prefix, false))     // start: if, name is OK (white list control)
         {
             // -- check if exist the specified file
-            path = ded_store_path + current_user->username + "/" + file_name;
             if(access(path.c_str(), F_OK ) != 0)         // if exist return 0 otherwhise return -1
             {
                 // set the message for the confirm or not
@@ -1069,7 +1089,7 @@ void handle_upload_req(int socket, User* current_user, unsigned char* session_ke
                      	error("Error in handle_upload_req: message Malloc error.\n");
                  	memcpy(send_mex, temp, msg_len);         // copy in message
                  	
-                 	cout << "User: " << current_user->username <<" successfully uploaded  file '" << file_name << "' on the server. Uploaded " << file_size << " Bytes.\n";
+                 	cout << "User: " << current_user->username <<" successfully uploaded  file '" << file_name << "' on the server. Uploaded " << file_size << " Bytes.\n\n";
         		}
         		else if (cmd_code == -1)                  // error message
         		{
@@ -1167,6 +1187,7 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
     long long file_size = 0;	    // contain the size of the file to be uploaded
     FILE* file_dw;				    // file to be uploaded
     bool ov_size = false;           // in case of big size to upload
+    string prefix = ded_store_path  + current_user->username + "/";				// the correct prefix that must have file paths
     long long ret;
     
     // take the name of the file
@@ -1189,14 +1210,16 @@ void handle_download_req(int socket, User* current_user, unsigned char* session_
     }       // end: if to check file name
     else    // start: else 1.0 -- file name and size ok
     {
-        cout << "Download request of the file '" << file_name << "' arrived from user: " << current_user->username << ".\n";
-        
         // 0) verify the correctness
         // -- verify file name
-        if (check_file_name(file_name))     // start: if, name is OK (white list control)
+        path = ded_store_path + current_user->username + "/" + file_name;
+        if (check_file_name(path, prefix))     // start: if, name is OK (white list control)
         {       // start: if 1.1
+        	path = get_can_str(path, prefix);
+			file_name = path.substr(prefix.length());		// ge the clear file name
+        
+        	cout << "Download request of the file '" << file_name << "' arrived from user: " << current_user->username << ".\n";
             // -- check if exist the specified file
-            path = ded_store_path + current_user->username + "/" + file_name;
             if(access(path.c_str(), F_OK ) != 0)         // if exist return 0 otherwhise return -1
             {       // start: if 1.1.1 
                 // set error mex
@@ -1567,7 +1590,7 @@ void *client_handler(void* arguments)
         // close connection
     	close(socket);         // close the socket
     	pthread_exit(NULL);    // terminate the thread
-    	return;
+    	return NULL;
     }
     
 	// -- username is correct and user is not online
@@ -1757,7 +1780,7 @@ void *client_handler(void* arguments)
         		{
         		case -1:   // receive an error message
             		{
-                		cerr << string receive_err_code;
+                		cerr << receive_err_code;
                 		break;
             		}
             	case 0:    // close connection request
